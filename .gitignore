@@ -9,3 +9,9 @@ node_modules/
 .npm-cache/
 .DS_Store
 .local/
+
+# trailpilot server
+server/target/
+data/
+cache/
+.toolchain/

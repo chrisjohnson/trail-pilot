@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
 <title>Friday Morning Hard Trail Run — 3D Route</title>
-<link href="https://unpkg.com/cesium@1.125.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
-<script src="https://unpkg.com/cesium@1.125.0/Build/Cesium/Cesium.js"></script>
+<link href="/cdn/unpkg.com/cesium@1.125.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<script src="/cdn/unpkg.com/cesium@1.125.0/Build/Cesium/Cesium.js"></script>
 <style>
   :root {
     --panel: rgba(14,20,38,0.82); --line: #FF6B3B; --break: #FFB347; --third: #FFD23F;
@@ -33,6 +33,9 @@
   #info .hint { margin-top:12px; font-size:11px; color:var(--muted); line-height:1.4; }
   #legend { position:absolute; bottom:214px; left:16px; padding:10px 12px; z-index:11; font-size:12px; }
   #legend .item { display:flex; align-items:center; padding:4px 0; cursor:pointer; user-select:none; }
+  #pf-btn { font-size:12px; font-weight:600; padding:6px 10px; border-radius:7px; border:1px solid rgba(255,255,255,.25); background:rgba(255,255,255,.08); color:#fff; cursor:pointer; }
+  #pf-btn:disabled { opacity:.55; cursor:default; }
+  #pf-status { font-size:11px; color:var(--muted); margin-top:3px; min-height:13px; }
   #legend .item:hover { color:#fff; }
   #legend .sw { width:20px; height:5px; border-radius:3px; margin-right:9px; display:inline-block; }
   #legend .pin { width:11px; height:11px; border-radius:50%; margin-right:9px; display:inline-block; box-shadow:0 0 0 2px rgba(255,255,255,0.25); }
@@ -104,6 +107,7 @@
     <div class="stat"><div class="v line" id="s-miles">—</div><div class="l">Distance</div></div>
     <div class="stat"><div class="v" id="s-dur">—</div><div class="l">Duration</div></div>
     <div class="stat"><div class="v" id="s-pace">—</div><div class="l">Avg Pace</div></div>
+    <div class="stat"><button id="pf-btn">Pre-fetch offline</button><div class="l" id="pf-status"></div></div>
   </div>
 </div>
 
@@ -149,9 +153,10 @@
 
 <script>
 async function init() {
-    // Resolve Cesium's bundled assets (skybox, ion credit, moon) via the CDN, not the local server.
+    // Resolve Cesium's bundled assets (skybox, ion credit, moon) through the server's /cdn pull-through cache.
+    // First online load fills the durable file cache; offline loads serve it.
     if (window.Cesium && !window.Cesium.basePath) {
-      window.Cesium.basePath = 'https://unpkg.com/cesium@1.125.0/Build/Cesium/';
+      window.Cesium.basePath = '/cdn/unpkg.com/cesium@1.125.0/Build/Cesium/';
     }
   let D;
   try {
@@ -177,6 +182,35 @@ async function init() {
   document.getElementById('s-dur').textContent = fmtDur(D.totalDurationSec);
   document.getElementById('s-pace').textContent = (D.totalDurationSec/60/D.totalDistanceMiles).toFixed(1) + ' min/mi';
   document.getElementById('bl-n').textContent = D.breaks.length;
+
+  // Pre-fetch offline: warm the server's pull-through tile cache for this
+  // route (corridor + 1 km margin, zooms 10–15). Afterwards the page renders
+  // entirely from the durable file cache with no internet needed.
+  const pfBtn = document.getElementById('pf-btn');
+  const pfStatus = document.getElementById('pf-status');
+  let pfTimer = null;
+  const pfStop = () => { if (pfTimer) { clearInterval(pfTimer); pfTimer = null; } };
+  pfBtn.addEventListener('click', async () => {
+    pfStop(); pfBtn.disabled = true; pfStatus.textContent = 'starting…';
+    try {
+      const r = await fetch('/prefetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zmin: 10, zmax: 15, marginKm: 1 }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || 'HTTP ' + r.status);
+      const tick = async () => {
+        const s2 = await (await fetch('/prefetch/' + j.job)).json();
+        pfStatus.textContent = s2.done + '/' + s2.total + ' tiles (' + s2.pct + '%' + (s2.failed ? ', ' + s2.failed + ' failed' : '') + ')';
+        if (s2.state === 'done') {
+          pfStop(); pfBtn.disabled = false;
+          pfStatus.textContent = 'done — ' + s2.done + '/' + s2.total + (s2.failed ? ', ' + s2.failed + ' failed' : '') + ' — ready offline';
+        }
+      };
+      await tick();
+      pfTimer = setInterval(tick, 2000);
+    } catch (e) {
+      pfStop(); pfBtn.disabled = false;
+      pfStatus.textContent = 'prefetch failed: ' + e.message;
+    }
+  });
 
   const N = D.route.length;
   const flat = new Float64Array(N*4);               // lon,lat,ele,timeOffset
@@ -226,7 +260,7 @@ async function init() {
   // OpenTopoMap hillshaded topo map as base imagery.
   // Canonical sync provider (Sw constructor accepts url/tileWidth/tileHeight/maximumLevel) added via addImageryProvider.
   viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-    url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png',
+    url: '/tiles/otm/{z}/{x}/{y}.png', // via trailpilot pull-through cache (durable file store, 1y TTL)
     tileWidth: 256, tileHeight: 256, maximumLevel: 17,
     credit: 'OpenTopoMap'
   }));
