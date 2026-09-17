@@ -3,19 +3,38 @@
  * gpx2route.js — convert a GPX track into the route_data.json that trail-pilot's
  * index.html consumes.
  *
- * Usage: node gpx2route.js <input.gpx> [output.json]
+ * Usage: node gpx2route.js <input.gpx> [output.json] [--tz=Area/Location]
  *
- * Break detection: a "break" is a stretch where the runner is nearly stationary
- * — total GPS drift over a 10-minute window stays under BREAK_DRIFT_M. Tune the
- * constants below if a given GPX has a different point density.
+ * Timezone: the IANA timezone of the start point is auto-detected from a
+ * precomputed boundary grid (build/tz-grid.json, see gen-tz-grid.js) and
+ * written to the output as "timezone". Override with --tz=Area/Location.
  */
 const fs = require('fs');
+const path = require('path');
+
+// Break detection: a "break" is a stretch where the runner is nearly stationary
+// — total GPS drift over a 10-minute window stays under BREAK_DRIFT_M. Tune the
+// constants below if a given GPX has a different point density.
 
 // ---- tunables ----
 const WINDOW_SEC    = 600;  // sliding window length (10 min)
 const BREAK_DRIFT_M = 200;  // max meters of movement in the window to count as a break
 const MIN_BREAK_SEC = 600;  // minimum break duration (10 min) to keep
 // ------------------
+
+// ---- timezone detection (offline grid; regenerate with gen-tz-grid.js) ----
+let TZ_GRID = null;
+try { TZ_GRID = JSON.parse(fs.readFileSync(path.join(__dirname, 'tz-grid.json'), 'utf8')); } catch (e) { /* no grid — detection disabled */ }
+function tzAt(lat, lon) {
+  if (!TZ_GRID) return null;
+  const res = TZ_GRID.res, cols = Math.round(360 / res), rows = Math.round(180 / res);
+  const r = Math.min(rows - 1, Math.max(0, Math.floor((90 - lat) / res)));
+  const c = Math.min(cols - 1, Math.max(0, Math.floor((lon + 180) / res)));
+  for (const run of TZ_GRID.rows[r]) if (c >= run[0] && c < run[0] + run[2]) return run[1] < 0 ? null : TZ_GRID.zones[run[1]];
+  return null;
+}
+function validTz(tz) { try { new Date().toLocaleTimeString('en-US', { timeZone: tz }); return true; } catch (e) { return false; } }
+// -----------------------------------------------------------------------------
 
 const R = 6371008.8, toR = Math.PI / 180;
 function hav(a, b) {
@@ -68,8 +87,11 @@ function fmtDur(s) { s = Math.round(s); const h = Math.floor(s/3600), m = Math.f
 function utcStr(ms) { return new Date(ms).toISOString().replace('T',' ').replace('.000Z',' UTC'); }
 
 function main() {
-  const input = process.argv[2];
-  if (!input) { console.error('Usage: node gpx2route.js <input.gpx> [output.json]'); process.exit(1); }
+  const args = process.argv.slice(2);
+  const tzFlag = args.find(a => a.startsWith('--tz='));
+  const positional = args.filter(a => !a.startsWith('--'));
+  const input = positional[0];
+  if (!input) { console.error('Usage: node gpx2route.js <input.gpx> [output.json] [--tz=Area/Location]'); process.exit(1); }
   const xml = fs.readFileSync(input, 'utf8');
   const { name, pts } = parseGpx(xml);
   const t0 = pts[0].t;
@@ -85,8 +107,16 @@ function main() {
     durSec: b.durSec, durStr: fmtDur(b.durSec),
     startUTC: utcStr(t0 + b.start * 1000),
   }));
+  const override = tzFlag ? tzFlag.slice(5) : null;
+  const detected = tzAt(pts[0].lat, pts[0].lon);
+  let timezone = override || detected;
+  if (timezone && !validTz(timezone)) {
+    console.log('  warning: invalid timezone "' + timezone + '"' + (override ? ' (from --tz)' : '') + ' — using ' + (override ? 'detection' : 'none'));
+    timezone = override ? detected : null;
+  }
   const out = {
     name,
+    timezone: timezone || null,
     totalDistanceMiles: +totalMiles.toFixed(1),
     totalDistanceKm: +(totalM / 1000).toFixed(1),
     totalDurationSec: totalSec,
@@ -96,7 +126,7 @@ function main() {
     breaks: breakObjs,
     route,
   };
-  const output = process.argv[3] || 'route_data.json';
+  const output = positional[1] || 'route_data.json';
   fs.writeFileSync(output, JSON.stringify(out));
   console.log('Wrote', output);
   console.log('  name:', name);
@@ -104,5 +134,6 @@ function main() {
   console.log('  distance:', out.totalDistanceMiles, 'mi');
   console.log('  duration:', out.totalDurationStr);
   console.log('  breaks:', breakObjs.length, breakObjs.map(b => b.durStr + '@' + b.mile + 'mi').join(', '));
+  console.log('  timezone:', timezone ? timezone + (detected && timezone !== detected ? ' (--tz override; detected ' + (detected || 'none') + ')' : '') : '(not detected — app falls back to its built-in default)');
 }
 main();

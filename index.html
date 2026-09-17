@@ -163,11 +163,14 @@ async function init() {
 
   const fmtDur = (s) => { s=Math.round(s); const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);
     if (h>0) return h+'h '+m+'m'; if (m>0) return m+'m'; return s+'s'; };
-  // Local wall-clock times: the GPS start (-83.52, 37.28) is Kentucky -> Eastern time.
+  // Local wall-clock times: prefer the timezone gpx2route.js detected from the
+  // start coordinates (D.timezone); fall back to this constant for data files
+  // generated before detection existed.
   const LOCAL_TZ = 'America/New_York';
+  const TZ = D.timezone || LOCAL_TZ;
   const toUTC = (iso) => new Date(String(iso).replace(' ', 'T').replace(' UTC', 'Z'));
-  const fmtWall = (iso) => { try { return toUTC(iso).toLocaleTimeString('en-US', { timeZone: LOCAL_TZ, hour: 'numeric', minute: '2-digit', hour12: true }); } catch(e){ return iso; } };
-  const fmtWallDate = (iso) => { try { const d=toUTC(iso); return d.toLocaleDateString('en-US', { timeZone: LOCAL_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }) + ' at ' + d.toLocaleTimeString('en-US', { timeZone: LOCAL_TZ, hour: 'numeric', minute: '2-digit', hour12: true }); } catch(e){ return iso; } };
+  const fmtWall = (iso) => { try { return toUTC(iso).toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true }); } catch(e){ return iso; } };
+  const fmtWallDate = (iso) => { try { const d=toUTC(iso); return d.toLocaleDateString('en-US', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }) + ' at ' + d.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit', hour12: true }); } catch(e){ return iso; } };
   const fmtClock = fmtDur;
   document.getElementById('subtime').textContent = 'Started ' + fmtWallDate(D.startUTC);
   document.getElementById('s-miles').textContent = D.totalDistanceMiles + ' mi';
