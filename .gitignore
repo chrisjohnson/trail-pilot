@@ -1,0 +1,10 @@
+# generated data
+route_data.json
+
+# input GPX files (keep the dir, ignore the files)
+input/*.gpx
+
+# node / OS
+node_modules/
+.npm-cache/
+.DS_Store

@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Friday Morning Hard Trail Run — 3D Route</title>
+<link href="https://unpkg.com/cesium@1.125.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+<script src="https://unpkg.com/cesium@1.125.0/Build/Cesium/Cesium.js"></script>
+<style>
+  :root {
+    --panel: rgba(14,20,38,0.82); --line: #FF6B3B; --break: #FFB347; --third: #FFD23F;
+    --ink: #eef2f8; --muted: #9aa7bd; --accent: #43d9ad;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif; color:var(--ink); background:#000; }
+  #cesiumContainer { position:absolute; inset:0; }
+  .glass { background:var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border:1px solid rgba(255,255,255,0.09); border-radius:14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); }
+  #banner { position:absolute; top:16px; left:16px; right:16px; padding:16px 18px; z-index:10; display:flex; flex-wrap:wrap; gap:14px 22px; align-items:center; }
+  #banner h1 { font-size:18px; margin:0; letter-spacing:0.3px; font-weight:600; }
+  #banner .sub { color:var(--muted); font-size:12px; margin-top:2px; }
+  .stats { display:flex; gap:18px; margin-left:auto; flex-wrap:wrap; }
+  .stat { text-align:right; }
+  .stat .v { font-size:18px; font-weight:700; }
+  .stat .v.line { color:var(--line); }
+  .stat .l { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
+  #info { position:absolute; top:16px; right:16px; width:288px; padding:16px 16px 18px; z-index:11; }
+  #info h2 { margin:0 0 6px; font-size:13px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); }
+  #info .big { font-size:22px; font-weight:700; margin:2px 0 10px; }
+  #info .row { display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid rgba(255,255,255,0.08); font-size:13px; }
+  #info .row .k { color:var(--muted); }
+  #info .row .v { font-weight:600; }
+  #info .hint { margin-top:12px; font-size:11px; color:var(--muted); line-height:1.4; }
+  #legend { position:absolute; bottom:214px; left:16px; padding:10px 12px; z-index:11; font-size:12px; }
+  #legend .item { display:flex; align-items:center; padding:4px 0; cursor:pointer; user-select:none; }
+  #legend .item:hover { color:#fff; }
+  #legend .sw { width:20px; height:5px; border-radius:3px; margin-right:9px; display:inline-block; }
+  #legend .pin { width:11px; height:11px; border-radius:50%; margin-right:9px; display:inline-block; box-shadow:0 0 0 2px rgba(255,255,255,0.25); }
+  #legend .lh { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin:7px 0 2px; }
+  #legend #break-list { max-height:150px; overflow-y:auto; }
+  #legend #break-list .item { padding:3px 0; }
+  #legend-toggle { cursor:pointer; user-select:none; }
+  #legend-toggle .caret { display:none; }
+  #legend.open #legend-toggle .caret { transform:rotate(180deg); }
+  #timeline { position:absolute; left:16px; right:16px; bottom:16px; padding:12px 16px; z-index:11; }
+  #tl-head { display:flex; align-items:center; gap:14px; margin-bottom:8px; }
+  #elev-wrap { width:100%; cursor:crosshair; margin-top:2px; }
+  #elev { display:block; }
+  #playBtn { background:var(--accent); color:#04231b; border:0; border-radius:10px; font-weight:700; font-size:14px; padding:8px 16px; cursor:pointer; min-width:88px; }
+  #playBtn:hover { filter:brightness(1.08); }
+  #tl-read { font-variant-numeric: tabular-nums; font-weight:700; font-size:16px; }
+  #tl-read .m { color:var(--line); }
+  #tl-legend { margin-left:auto; color:var(--muted); font-size:11px; letter-spacing:1px; text-transform:uppercase; }
+  input[type=range] { -webkit-appearance:none; width:100%; height:6px; border-radius:4px; background:linear-gradient(90deg, var(--line) 0%, var(--line) 100%, rgba(255,255,255,0.18) 100%, rgba(255,255,255,0.18) 100%); outline:none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%; background:#fff; cursor:pointer; box-shadow:0 0 0 3px rgba(255,107,59,0.6); }
+  input[type=range]::-moz-range-thumb { width:18px; height:18px; border:0; border-radius:50%; background:#fff; cursor:pointer; box-shadow:0 0 0 3px rgba(255,107,59,0.6); }
+  #status { position:absolute; top:98px; left:16px; z-index:20; font-size:13px; font-weight:600; color:#fff; background:rgba(16,20,34,0.92); padding:7px 13px; border-radius:9px; border:1px solid rgba(255,255,255,0.25); max-width:460px; box-shadow:0 8px 20px rgba(0,0,0,0.45); display:none; }
+  #info .close { position:absolute; top:10px; right:10px; width:26px; height:26px; border:0; border-radius:8px; background:rgba(255,255,255,0.08); color:var(--muted); font-size:16px; line-height:1; cursor:pointer; }
+  #info .close:hover { background:rgba(255,255,255,0.16); color:#fff; }
+  #ctrls { position:absolute; bottom:214px; right:16px; z-index:12; display:flex; flex-direction:column; gap:8px; }
+  .cesium-viewer-fullscreenContainer { bottom:214px !important; right:74px !important; }
+  #ctrls .cbtn { width:46px; height:46px; border:1px solid rgba(255,255,255,0.42); border-radius:13px;
+    background:linear-gradient(180deg, rgba(70,86,122,0.94), rgba(38,47,74,0.94)); color:#fff; font-size:21px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; box-shadow:0 3px 12px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.25);
+    backdrop-filter:blur(6px); transition:transform .12s ease, background .12s ease, border-color .12s ease; }
+  #ctrls .cbtn:hover { background:linear-gradient(180deg, rgba(67,217,173,0.96), rgba(40,168,136,0.96)); border-color:#fff; transform:translateY(-2px); }
+  #ctrls .cbtn:active { transform:translateY(0) scale(0.95); }
+  #compassIcon { transition: transform 0.12s ease; }
+  #speed { display:flex; align-items:center; gap:6px; }
+  #speed .sbtn { border:0; border-radius:8px; background:rgba(255,255,255,0.08); color:var(--ink); font-size:12px; font-weight:700; padding:6px 9px; cursor:pointer; font-variant-numeric:tabular-nums; }
+  #speed .sbtn.active { background:var(--line); color:#1a0d06; }
+  #speed .sl { color:var(--muted); font-size:11px; letter-spacing:1px; text-transform:uppercase; margin-right:2px; }
+  @media (max-width: 640px) {
+    #tl-head { display:none; }
+    #c-rotl, #c-rotr { display:none; }
+    #tl-read { font-size:13px; }
+    #speed .sl { display:none; }
+    #speed .sbtn { padding:5px 8px; font-size:11px; }
+    #timeline { padding:8px 10px; }
+    #banner { top:10px; left:10px; right:10px; padding:10px 12px; gap:8px 14px; }
+    #banner h1 { font-size:15px; }
+    #banner .sub { font-size:11px; }
+    #info { top:10px; right:10px; width:232px; padding:12px; }
+    #ctrls { bottom:150px; right:10px; gap:6px; }
+    #ctrls .cbtn { width:42px; height:42px; border-radius:11px; }
+    .cesium-viewer-fullscreenContainer { right:62px !important; bottom:150px !important; }
+    #legend { bottom:150px; left:10px; padding:8px 10px; }
+    #legend-toggle .caret { display:inline-block; }
+    #legend #break-list { display:none; }
+    #legend.open #break-list { display:block; }
+    #status { top:130px; left:10px; max-width:72vw; }
+  }
+</style>
+</head>
+<body>
+<div id="cesiumContainer"></div>
+
+<div id="banner" class="glass">
+  <div>
+    <h1 id="title">Friday Morning Hard Trail Run</h1>
+    <div class="sub" id="subtime"></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="v line" id="s-miles">—</div><div class="l">Distance</div></div>
+    <div class="stat"><div class="v" id="s-dur">—</div><div class="l">Duration</div></div>
+    <div class="stat"><div class="v" id="s-pace">—</div><div class="l">Avg Pace</div></div>
+  </div>
+</div>
+
+<div id="info" class="glass">
+  <button id="infoClose" class="close" title="Close">✕</button>
+  <div id="info-body">
+    <h2>Overview</h2>
+    <div class="big">Tap a pin</div>
+    <div class="hint">Click any marker in the legend or on the map to inspect a break, or drag the timeline to walk the route from start to finish.</div>
+  </div>
+</div>
+
+<div id="ctrls">
+  <button id="c-reset" class="cbtn glass" title="Reset to north-up"><svg id="compassIcon" viewBox="0 0 40 40" width="27" height="27" style="display:block"><circle cx="20" cy="20" r="16" fill="none" stroke="#fff" stroke-width="2"/><polygon points="20,6 25,20 15,20" fill="#ff3b30"/><polygon points="20,34 25,20 15,20" fill="#ffffff"/><circle cx="20" cy="20" r="1.8" fill="#fff"/></svg></button>
+  <button id="c-tiltup" class="cbtn glass" title="Tilt up"><svg viewBox="0 0 40 40" width="24" height="24"><path d="M 11 19 L 20 11 L 29 19" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M 11 30 L 20 22 L 29 30" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  <button id="c-tiltdown" class="cbtn glass" title="Tilt down"><svg viewBox="0 0 40 40" width="24" height="24"><path d="M 11 11 L 20 19 L 29 11" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M 11 22 L 20 30 L 29 22" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  <button id="c-rotl" class="cbtn glass" title="Rotate left"><svg viewBox="0 0 40 40" width="27" height="27" style="display:block"><path d="M 20 8 A 12 12 0 1 0 32 20" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/><polygon points="27,23 37,23 32,14" fill="#fff"/></svg></button>
+  <button id="c-rotr" class="cbtn glass" title="Rotate right"><svg viewBox="0 0 40 40" width="27" height="27" style="display:block"><path d="M 20 8 A 12 12 0 1 1 8 20" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/><polygon points="3,17 13,17 8,26" fill="#fff"/></svg></button>
+</div>
+
+<div id="legend" class="glass">
+  <div class="item" style="cursor:default"><span class="sw" style="background:var(--line)"></span>Route track</div>
+  <div class="lh" id="legend-toggle">Breaks (<b id="bl-n">0</b>) <span class="caret">▾</span></div>
+  <div id="break-list"></div>
+</div>
+
+<div id="timeline" class="glass">
+  <div id="tl-head">
+    <button id="playBtn">▶ Play</button>
+    <div id="tl-read"><span class="m" id="tl-mile">0.00 mi</span> &nbsp;·&nbsp; <span class="t" id="tl-time">00:00:00</span></div>
+    <div id="speed"><span class="sl">Speed</span>
+      <button class="sbtn" data-s="1">1×</button>
+      <button class="sbtn" data-s="10">10×</button>
+      <button class="sbtn" data-s="30">30×</button>
+      <button class="sbtn active" data-s="120">120×</button>
+    </div>
+    <div id="tl-legend">Progress along route</div>
+  </div>
+  <div id="elev-wrap"><canvas id="elev"></canvas></div>
+</div>
+
+<div id="status">Loading…</div>
+
+<script>
+async function init() {
+    // Resolve Cesium's bundled assets (skybox, ion credit, moon) via the CDN, not the local server.
+    if (window.Cesium && !window.Cesium.basePath) {
+      window.Cesium.basePath = 'https://unpkg.com/cesium@1.125.0/Build/Cesium/';
+    }
+  let D;
+  try {
+    const r = await fetch('route_data.json', {cache:'no-store'});
+    D = await r.json();
+  } catch (e) {
+    document.getElementById('status').textContent = 'Failed to load route_data.json'; throw e;
+  }
+
+  const fmtDur = (s) => { s=Math.round(s); const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);
+    if (h>0) return h+'h '+m+'m'; if (m>0) return m+'m'; return s+'s'; };
+  // Local wall-clock times: the GPS start (-83.52, 37.28) is Kentucky -> Eastern time.
+  const LOCAL_TZ = 'America/New_York';
+  const toUTC = (iso) => new Date(String(iso).replace(' ', 'T').replace(' UTC', 'Z'));
+  const fmtWall = (iso) => { try { return toUTC(iso).toLocaleTimeString('en-US', { timeZone: LOCAL_TZ, hour: 'numeric', minute: '2-digit', hour12: true }); } catch(e){ return iso; } };
+  const fmtWallDate = (iso) => { try { const d=toUTC(iso); return d.toLocaleDateString('en-US', { timeZone: LOCAL_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }) + ' at ' + d.toLocaleTimeString('en-US', { timeZone: LOCAL_TZ, hour: 'numeric', minute: '2-digit', hour12: true }); } catch(e){ return iso; } };
+  const fmtClock = fmtDur;
+  document.getElementById('subtime').textContent = 'Started ' + fmtWallDate(D.startUTC);
+  document.getElementById('s-miles').textContent = D.totalDistanceMiles + ' mi';
+  document.getElementById('s-dur').textContent = fmtDur(D.totalDurationSec);
+  document.getElementById('s-pace').textContent = (D.totalDurationSec/60/D.totalDistanceMiles).toFixed(1) + ' min/mi';
+  document.getElementById('bl-n').textContent = D.breaks.length;
+
+  const N = D.route.length;
+  const flat = new Float64Array(N*4);               // lon,lat,ele,timeOffset
+  const timeArr = new Float64Array(N);
+  const distArr = new Float64Array(N);              // meters
+  for (let i=0;i<N;i++){ const p=D.route[i];
+    flat[i*4]=p[0]; flat[i*4+1]=p[1]; flat[i*4+2]=p[2]; flat[i*4+3]=p[3];
+    timeArr[i]=p[3];
+  }
+  {
+    let c=0; distArr[0]=0;
+    for (let i=1;i<N;i++){
+      const lon1=flat[(i-1)*4],lat1=flat[(i-1)*4+1],lon2=flat[i*4],lat2=flat[i*4+1];
+      const toR=x=>x*Math.PI/180; const R=6371000;
+      const dLat=toR(lat2-lat1),dLon=toR(lon2-lon1);
+      const a=Math.sin(dLat/2)**2+Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLon/2)**2;
+      c += 2*R*Math.asin(Math.sqrt(a)); distArr[i]=c;
+    }
+  }
+
+  const timeToIndex = t => { let i=1; while(i<timeArr.length && timeArr[i]<=t) i++; return i-1; };
+  const pointAt = t => {
+    let i = timeToIndex(t);
+    if (i>=N-1) return [flat[(N-1)*4], flat[(N-1)*4+1], flat[(N-1)*4+2]];
+    const frac = (timeArr.length>1 && (timeArr[i+1]-timeArr[i])>0)
+      ? (t-timeArr[i])/(timeArr[i+1]-timeArr[i]) : 0;
+    return [ flat[i*4]+frac*(flat[(i+1)*4]-flat[i*4]),
+             flat[i*4+1]+frac*(flat[(i+1)*4+1]-flat[i*4+1]),
+             flat[i*4+2]+frac*(flat[(i+1)*4+2]-flat[i*4+2]) ];
+  };
+
+  // Flat ellipsoid terrain. Resolves instantly so the globe's imagery surface
+  // starts driving tile requests immediately. (The previous direct-URL
+  // CesiumTerrainProvider never resolved without a valid token, and in 1.125 the
+  // globe won't drive ANY imagery until the terrain provider is ready.) OpenTopoMap
+  // is already hillshaded, so the flat globe still reads as relief.
+  const terrainProvider = new Cesium.EllipsoidTerrainProvider();
+
+  const viewer = new Cesium.Viewer('cesiumContainer', {
+    terrainProvider,
+    baseLayer: false, // no Ion default imagery (avoids asset-2 401); OpenTopoMap added explicitly below
+    timeline: false, animation: false, fullscreenButton: true,
+    geocoder: false, homeButton: false, infoBox: false,
+    sceneModePicker: false, selectionIndicator: false, navigationHelpButton: false,
+    baseLayerPicker: false
+  });
+  // OpenTopoMap hillshaded topo map as base imagery.
+  // Canonical sync provider (Sw constructor accepts url/tileWidth/tileHeight/maximumLevel) added via addImageryProvider.
+  viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url: 'https://tile.opentopomap.org/{z}/{x}/{y}.png',
+    tileWidth: 256, tileHeight: 256, maximumLevel: 17,
+    credit: 'OpenTopoMap'
+  }));
+  const credit = document.querySelector('.cesium-credit-container');
+  if (credit) credit.style.display='none';
+
+  const scene = viewer.scene;
+  scene.globe.depthTestAgainstGlobe = true;
+  scene.globe.enableLighting = false; // disabled while diagnosing imagery
+  scene.globe.showGroundAtmosphere = true;
+  scene.screenSpaceCameraController.enableDamping = true;
+
+  const routeFlat = new Float64Array(N*3);   // lon,lat,ele — 3 per point
+  for (let i=0;i<N;i++){ routeFlat[i*3]=flat[i*4]; routeFlat[i*3+1]=flat[i*4+1]; routeFlat[i*3+2]=flat[i*4+2]; }
+  const routeLonLat = new Float64Array(N*2);   // lon,lat — 2 per point, for clamped-to-ground polylines
+  for (let i=0;i<N;i++){ routeLonLat[i*2]=flat[i*4]; routeLonLat[i*2+1]=flat[i*4+1]; }
+  // Halos are solid semi-transparent lines (same reliable material as the black core).
+  // Orange halo is static over the FULL route; only the green "traveled" halo regrows,
+  // so we never rewrite the large orange geometry during playback (no flicker).
+  const glowUntraveled = viewer.entities.add({
+    polyline: {
+      positions: Cesium.Cartesian3.fromDegreesArray(routeLonLat),   // full route, never updated
+      width: 26, clampToGround: true,
+      material: Cesium.Color.fromCssColorString('rgba(255,122,26,0.5)')
+    }
+  });
+  const glowTraveled = viewer.entities.add({
+    polyline: {
+      positions: Cesium.Cartesian3.fromDegreesArray(routeLonLat.subarray(0,2)),
+      width: 26, clampToGround: true,
+      material: Cesium.Color.fromCssColorString('rgba(57,255,20,0.55)')
+    }
+  });
+  const routeCore = viewer.entities.add({
+    polyline: {
+      positions: Cesium.Cartesian3.fromDegreesArray(routeLonLat),
+      width: 5, clampToGround: true,
+      material: Cesium.Color.fromCssColorString('#0a0d14'),
+      outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,0.55)'), outlineWidth: 1.5
+    }
+  });
+  const starSVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+    "<svg xmlns='http://www.w3.org/2000/svg' width='52' height='52' viewBox='0 0 52 52'>" +
+    "<polygon points='26,3 32.5,19 49,19 35.5,29 40,46 26,36 12,46 16.5,29 3,19 19.5,19' fill='#FFD23F' stroke='#ffffff' stroke-width='2.5' stroke-linejoin='round'/></svg>");
+  const runner = viewer.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
+    billboard: {
+      image: starSVG, width: 42, height: 42,
+      horizontalOrigin: Cesium.HorizontalOrigin.CENTER, verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      scaleByDistance: new Cesium.NearFarScalar(0, 1.15, 120000, 0.5)
+    }
+  });
+  const runnerGlow = viewer.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
+    point: { pixelSize: 26, color: Cesium.Color.fromCssColorString('rgba(255,210,63,0.4)'),
+             disableDepthTestDistance: Number.POSITIVE_INFINITY }
+  });
+
+  const markers = [];
+  const pushEntity = (m) => {
+    const ent = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(m.lon, m.lat, 0),
+      point: { pixelSize: m.type==='third'?16:14, color: Cesium.Color.fromCssColorString(m.type==='third'?'#FFD23F':'#FFB347'),
+               outlineColor: Cesium.Color.WHITE, outlineWidth: 2, depthTestAgainstGlobe:true,
+               disableDepthTestDistance: Number.POSITIVE_INFINITY },
+      label: { text: m.label, font: 'bold 13px "Segoe UI", sans-serif', color: Cesium.Color.WHITE,
+               outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+               showBackground: true,
+               backgroundColor: Cesium.Color.fromCssColorString('rgba(16,20,34,0.92)'),
+               backgroundPadding: new Cesium.Cartesian2(8,5),
+               verticalOrigin: Cesium.VerticalOrigin.BOTTOM, horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+               pixelOffset: new Cesium.Cartesian2(0,-18), depthTestAgainstGlobe:true,
+               disableDepthTestDistance: Number.POSITIVE_INFINITY }
+    });
+    ent._marker = m; return ent;
+  };
+
+  // 1/3 waypoint removed on request — only break points are shown.
+  D.breaks.forEach(b => { b.label = fmtDur(b.durSec) + ' break'; markers.push(b); });
+  markers.forEach(m => pushEntity(m));
+
+  const info = document.getElementById('info');
+  try { if (localStorage.getItem('runInfoDismissed') === '1') info.style.display = 'none'; } catch(_){}
+  // Position the camera so the clicked waypoint lands dead-center (north-up, tilted).
+  const flyTo = (m) => {
+    const T = Cesium.Cartesian3.fromDegrees(m.lon, m.lat, 0);
+    const dist = 3400, heading = 0, pitch = Cesium.Math.toRadians(-52);
+    const back = new Cesium.Cartesian3(-Math.sin(heading)*Math.cos(pitch), -Math.cos(heading)*Math.cos(pitch), -Math.sin(pitch));
+    const enu = Cesium.Transforms.eastNorthUpToFixedFrame(T);
+    const backW = Cesium.Matrix4.multiplyByPointAsVector(enu, back, new Cesium.Cartesian3());
+    const camPos = new Cesium.Cartesian3(T.x + backW.x*dist, T.y + backW.y*dist, T.z + backW.z*dist);
+    viewer.camera.flyTo({ destination: camPos, orientation: { heading, pitch, roll: 0 }, duration: 1.0 });
+  };
+  const infoBody = document.getElementById('info-body');
+  const select = m => {
+    info.style.display = '';
+    infoBody.innerHTML =
+      '<h2>' + (m.type==='third'?'1/3 Milestone':'Break') + '</h2>' +
+      '<div class="big">' + (m.type==='third'?'At 1/3 of the route':'Rest stop') + '</div>' +
+      '<div class="row"><span class="k">Location</span><span class="v">'+m.lat.toFixed(4)+', '+m.lon.toFixed(4)+'</span></div>' +
+      '<div class="row"><span class="k">Milestone</span><span class="v">'+m.mile+' mi</span></div>' +
+      (m.type==='break' ? '<div class="row"><span class="k">Duration</span><span class="v">'+fmtDur(m.durSec)+'</span></div>' : '') +
+      (m.type==='break' ? '<div class="row"><span class="k">Started</span><span class="v">'+fmtWall(m.startUTC)+'</span></div>' : '') +
+      (m.type==='third' ? '<div class="row"><span class="k">Reached</span><span class="v">'+fmtDur(m.durSec)+'</span></div>' : '') +
+      '<div class="hint">Tip: drag to orbit, scroll to zoom, or use the timeline to walk the run.</div>';
+    flyTo(m);
+  };
+
+  const statusEl = document.getElementById('status');
+  let statusTimer = null;
+  const flashStatus = (msg) => { statusEl.textContent = msg; statusEl.style.display = 'block'; if (statusTimer) clearTimeout(statusTimer); statusTimer = setTimeout(() => { statusEl.textContent = ''; statusEl.style.display = 'none'; }, 4000); };
+  const doPick = (pixel) => {
+    const picks = viewer.scene.drillPick(pixel);
+    let found = null;
+    for (let k=0; k<picks.length; k++) {
+      const pk = picks[k]; if (!pk || !pk.id) continue;
+      const ent = pk.id._marker ? pk.id : (pk.id.id ? viewer.entities.getById(pk.id.id) : null);
+      if (ent && ent._marker) { found = ent._marker; break; }
+    }
+    if (found) { select(found); flashStatus('✓ ' + found.label); }
+    else flashStatus('click @ ' + Math.round(pixel.x) + ',' + Math.round(pixel.y) + ' — ' + picks.length + ' object(s) under cursor, no waypoint');
+  };
+  // Native DOM click on the canvas: the Cesium ScreenSpaceEventHandler's
+  // LEFT_DOWN/LEFT_UP never fired here, so use mousedown+mouseup (<10px = click).
+  const cv = scene.canvas;
+  let downXY = null;
+  cv.addEventListener('mousedown', (e) => { if (e.button === 0) downXY = { x: e.clientX, y: e.clientY }; });
+  cv.addEventListener('mouseup', (e) => {
+    if (e.button !== 0 || !downXY) return;
+    const dx = e.clientX - downXY.x, dy = e.clientY - downXY.y;
+    downXY = null;
+    if (dx*dx + dy*dy > 100) return; // was a drag
+    const r = cv.getBoundingClientRect();
+    doPick(new Cesium.Cartesian2(e.clientX - r.left, e.clientY - r.top));
+  });
+  // Touch tap on the canvas (mobile): a quick single-finger touch with <10px movement
+  // is a pick; anything else is a Cesium camera gesture (pan/zoom/rotate).
+  let touchXY = null;
+  cv.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) touchXY = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: performance.now() };
+  }, { passive: true });
+  // Double-tap zooms in at the tap point; a single tap picks (delayed 280ms to
+  // disambiguate from a double-tap).
+  const zoomInAt = (pixel) => {
+    const c = viewer.camera;
+    const target = c.pickEllipsoid(pixel, viewer.scene.globe.ellipsoid);
+    if (!target) { c.zoomIn(Math.max(20, c.positionCartographic.height * 0.25)); return; }
+    const range = Cesium.Cartesian3.distance(c.position, target);
+    const ctrl = viewer.scene.screenSpaceCameraController;
+    const wasDamping = ctrl.enableDamping;
+    ctrl.enableDamping = false;
+    c.lookAt(target, { heading: c.heading, pitch: c.pitch, range: Math.max(50, range * 0.5) });
+    c.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    ctrl.enableDamping = wasDamping;
+  };
+  let lastTap = null, pickTimer = null;
+  cv.addEventListener('touchend', (e) => {
+    if (!touchXY) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchXY.x, dy = t.clientY - touchXY.y;
+    const dt = performance.now() - touchXY.t;
+    touchXY = null;
+    if (dx*dx + dy*dy > 100 || dt > 400) return; // was a drag or long-press
+    const now = performance.now();
+    const r = cv.getBoundingClientRect();
+    const pixel = new Cesium.Cartesian2(t.clientX - r.left, t.clientY - r.top);
+    if (lastTap && now - lastTap.t < 300 && Math.hypot(t.clientX - lastTap.x, t.clientY - lastTap.y) < 30) {
+      clearTimeout(pickTimer);
+      zoomInAt(pixel);
+      lastTap = null;
+    } else {
+      lastTap = { x: t.clientX, y: t.clientY, t: now };
+      clearTimeout(pickTimer);
+      pickTimer = setTimeout(() => doPick(pixel), 280);
+    }
+  }, { passive: true });
+  // Legend lists each break (clickable); the 1/3 waypoint was removed on request.
+  const blEl = document.getElementById('break-list');
+  D.breaks.forEach(b => {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = '<span class="pin" style="background:var(--break)"></span>' + parseFloat(b.mile).toFixed(1) + ' mi · ' + fmtDur(b.durSec);
+    el.addEventListener('click', () => select(b));
+    blEl.appendChild(el);
+  });
+  document.getElementById('legend-toggle').addEventListener('click', () => {
+    document.getElementById('legend').classList.toggle('open');
+  });
+
+  const total = D.totalDurationSec;
+  const playBtn = document.getElementById('playBtn');
+  const milestoneRead = document.getElementById('tl-mile');
+  const timeRead = document.getElementById('tl-time');
+
+  // ---- Elevation-profile scrubber (canvas) with real-time hover preview ----
+  const elevCanvas = document.getElementById('elev');
+  const ectx = elevCanvas.getContext('2d');
+  let eH = 88, M_TO_FT = 3.28084, padL = 44, padR = 10, padT = 12, padB = 18;
+  const t0run = new Date(D.startUTC.replace(' ','T').replace(' UTC','Z')).getTime()/1000;
+  // breaks in the run clock: start/end (sec), flat elevation at the pre-break point
+  const breakInfo = D.breaks.map(b => {
+    const s = new Date(b.startUTC.replace(' ','T').replace(' UTC','Z')).getTime()/1000 - t0run;
+    let pre = 0; for (let i=0;i<N;i++){ if (timeArr[i] < s) pre=i; else break; }
+    return { start: s, end: s + b.durSec, ele: flat[pre*4+2]*M_TO_FT, preIdx: pre };
+  });
+  const elevAtTime = (t) => {
+    for (const b of breakInfo) if (t >= b.start && t <= b.end) return b.ele;
+    let i = timeToIndex(t); if (i >= N-1) return flat[(N-1)*4+2]*M_TO_FT;
+    const dt = timeArr[i+1]-timeArr[i];
+    const f = dt>0 ? (t-timeArr[i])/dt : 0;
+    return (flat[i*4+2]*(1-f) + flat[(i+1)*4+2]*f)*M_TO_FT;
+  };
+  let minE = Infinity, maxE = -Infinity;
+  for (let i=0;i<N;i++){ const e=flat[i*4+2]*M_TO_FT; if(e<minE)minE=e; if(e>maxE)maxE=e; }
+  minE = Math.floor((minE-40)/100)*100; maxE = Math.ceil((maxE+40)/100)*100;
+  const PLOT_N = 400, ptx = new Float64Array(PLOT_N), pty = new Float64Array(PLOT_N);
+  for (let k=0;k<PLOT_N;k++){ const t=k/(PLOT_N-1)*total; ptx[k]=t; pty[k]=elevAtTime(t); }
+  let eW = 600;
+  const sizeElev = () => {
+    const dpr = window.devicePixelRatio || 1;
+    eH = (window.innerWidth <= 640) ? 64 : 88;
+    eW = elevCanvas.parentElement.clientWidth;
+    elevCanvas.width = eW*dpr; elevCanvas.height = eH*dpr;
+    elevCanvas.style.width = eW+'px'; elevCanvas.style.height = eH+'px';
+    ectx.setTransform(dpr,0,0,dpr,0,0);
+  };
+  const xOf = (t) => padL + (t/total)*(eW-padL-padR);
+  const yOf = (ft) => padT + (1-(ft-minE)/(maxE-minE))*(eH-padT-padB);
+  const drawElev = (at) => {
+    const ctx = ectx; ctx.clearRect(0,0,eW,eH);
+    ctx.lineWidth = 1; ctx.font = '10px "Segoe UI",sans-serif';
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.fillStyle = 'rgba(255,255,255,0.42)';
+    for (let e=Math.ceil(minE/200)*200; e<=maxE; e+=200){ const y=yOf(e); ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(eW-padR,y); ctx.stroke(); ctx.fillText(e, 3, y+3); }
+    for (let t=0; t<=total; t+=7200){ const x=xOf(t); ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,eH-padB); ctx.stroke(); ctx.fillText((t/3600)+'h', x-8, eH-5); }
+    ctx.beginPath(); ctx.moveTo(xOf(ptx[0]), yOf(pty[0]));
+    for (let k=1;k<PLOT_N;k++) ctx.lineTo(xOf(ptx[k]), yOf(pty[k]));
+    ctx.lineTo(xOf(ptx[PLOT_N-1]), eH-padB); ctx.lineTo(xOf(ptx[0]), eH-padB); ctx.closePath();
+    ctx.fillStyle = 'rgba(120,255,80,0.13)'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(xOf(ptx[0]), yOf(pty[0]));
+    for (let k=1;k<PLOT_N;k++) ctx.lineTo(xOf(ptx[k]), yOf(pty[k]));
+    ctx.strokeStyle = '#7CFC00'; ctx.lineWidth = 1.5; ctx.stroke();
+    const mx = xOf(at);
+    ctx.strokeStyle = 'rgba(90,216,255,0.9)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(mx,padT); ctx.lineTo(mx,eH-padB); ctx.stroke();
+    ctx.fillStyle = '#4dd8ff'; ctx.beginPath(); ctx.arc(mx, yOf(elevAtTime(at)), 3.5, 0, Math.PI*2); ctx.fill();
+  };
+  sizeElev();
+  window.addEventListener('resize', () => { sizeElev(); drawElev(elapsed); });
+
+  let elapsed = 0, playing = false, lastT = 0, speed = 120, lastGlow = 0;
+  let previewActive = false, previewAt = null;
+  const showAt = (at, now) => {
+    let i = Math.min(timeToIndex(at), N-2);
+    let lon, lat;
+    for (const b of breakInfo) { if (at >= b.start && at <= b.end) { i = b.preIdx; lon = flat[i*4]; lat = flat[i*4+1]; break; } }
+    if (lon === undefined) { const p = pointAt(at); lon = p[0]; lat = p[1]; }
+    const rPos = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+    runner.position = rPos; runnerGlow.position = rPos;
+    milestoneRead.textContent = (distArr[i]/1609.344).toFixed(2) + ' mi';
+    timeRead.textContent = fmtClock(at);
+    // Regrow the green halo a few times a second (a clampToGround polyline that
+    // is rewritten every frame never gets a frame to draw).
+    if (now === undefined || now - lastGlow > 130) {
+      lastGlow = now || 0;
+      glowTraveled.polyline.positions = Cesium.Cartesian3.fromDegreesArray(routeLonLat.subarray(0,(i+1)*2));
+    }
+    drawElev(at);
+  };
+  const elevFrac = (e) => { const r = elevCanvas.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX-r.left-padL)/(r.width-padL-padR))); };
+  elevCanvas.addEventListener('mousemove', (e) => {
+    previewActive = true; previewAt = elevFrac(e)*total;
+    showAt(previewAt, performance.now());
+  });
+  elevCanvas.addEventListener('mouseleave', () => {
+    if (!previewActive) return;
+    previewActive = false; previewAt = null; lastT = performance.now(); lastGlow = 0;
+    showAt(elapsed, performance.now());
+  });
+  elevCanvas.addEventListener('click', (e) => {
+    elapsed = elevFrac(e)*total; previewActive = false; previewAt = null; lastT = performance.now(); lastGlow = 0;
+    showAt(elapsed, performance.now());
+    if (elapsed>=total && playing){ playing=false; playBtn.textContent='▶ Play'; }
+  });
+  // Mobile: tap-and-drag to scrub (no hover preview — the map updates in realtime)
+  const touchFrac = (e) => {
+    const r = elevCanvas.getBoundingClientRect();
+    const t = (e.touches && e.touches[0]) ? e.touches[0] : e.changedTouches[0];
+    return Math.max(0, Math.min(1, (t.clientX-r.left-padL)/(r.width-padL-padR)));
+  };
+  const scrubTo = (e) => {
+    elapsed = touchFrac(e)*total; previewActive = false; previewAt = null; lastT = performance.now();
+    showAt(elapsed, performance.now());
+  };
+  elevCanvas.addEventListener('touchstart', (e) => { e.preventDefault(); scrubTo(e); }, { passive:false });
+  elevCanvas.addEventListener('touchmove',  (e) => { e.preventDefault(); scrubTo(e); }, { passive:false });
+  elevCanvas.addEventListener('touchend',   (e) => { lastT = performance.now(); lastGlow = 0; showAt(elapsed, performance.now()); if (elapsed>=total && playing){ playing=false; playBtn.textContent='▶ Play'; } });
+  const loop = () => {
+    if (!playing) return;
+    const now = performance.now();
+    if (!previewActive) {
+      elapsed = Math.min(total, elapsed + (now-lastT)/1000*speed);
+      lastT = now;
+      showAt(elapsed, now);
+      if (elapsed >= total){ playing=false; playBtn.textContent='▶ Play'; return; }
+    }
+    requestAnimationFrame(loop);
+  };
+  const togglePlay = () => {
+    playing = !playing;
+    if (playing){ if (elapsed>=total) elapsed=0; playBtn.textContent='⏸ Pause'; lastT=performance.now(); requestAnimationFrame(loop); }
+    else playBtn.textContent='▶ Play';
+  };
+  playBtn.addEventListener('click', togglePlay);
+  document.querySelectorAll('#speed .sbtn').forEach(b => b.addEventListener('click', () => {
+    speed = parseFloat(b.dataset.s);
+    document.querySelectorAll('#speed .sbtn').forEach(x => x.classList.toggle('active', x===b));
+  }));
+  window.addEventListener('keydown', e => { if (e.code==='Space'){ e.preventDefault(); togglePlay(); } });
+
+  showAt(0);
+
+  // Fit the COMPLETE route in view: bounding sphere -> north-up, centered on the route.
+  const routePts = [];
+  for (let i=0;i<N;i+=8){ routePts.push(Cesium.Cartesian3.fromDegrees(flat[i*4], flat[i*4+1], 0)); }
+  const routeBS = Cesium.BoundingSphere.fromPoints(routePts);
+  viewer.camera.flyToBoundingSphere(routeBS, {
+    offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-12), routeBS.radius*2.9),
+    duration: 2.0
+  });
+
+    // --- Orientation controls: pure in-place rotation (position fixed, orientation changes) ---
+  const RAD = Cesium.Math.toRadians;
+  const $id = (x) => document.getElementById(x);
+  $id('infoClose').addEventListener('click', () => { document.getElementById('info').style.display = 'none'; try { localStorage.setItem('runInfoDismissed','1'); } catch(_){} });
+  // Orbit the camera around the screen-center look-at point (same pivot as two-finger rotate),
+  // so the center of the map stays fixed while heading/pitch change.
+  const orbitTo = (heading, pitch) => {
+    const c = viewer.camera;
+    const cv = viewer.scene.canvas;
+    const target = c.pickEllipsoid(new Cesium.Cartesian2(cv.clientWidth/2, cv.clientHeight/2), viewer.scene.globe.ellipsoid);
+    const startHeading = c.heading, startPitch = c.pitch;
+    if (!target) { c.flyTo({ destination: c.position.clone(), orientation: { heading, pitch, roll: 0 }, duration: 0.5 }); return; }
+    const range = Cesium.Cartesian3.distance(c.position, target);
+    const t0 = performance.now(), dur = 450;
+    if (orbitTo._raf) cancelAnimationFrame(orbitTo._raf);
+    // Take the shortest arc: normalize the heading delta to [-PI, PI] so a small
+    // clockwise (negative) offset doesn't wrap to ~350deg and spin the long way.
+    let dH = (heading - startHeading) % (2*Math.PI);
+    if (dH > Math.PI) dH -= 2*Math.PI;
+    if (dH < -Math.PI) dH += 2*Math.PI;
+    const endHeading = startHeading + dH;
+    const step = () => {
+      const t = Math.min(1, (performance.now() - t0) / dur);
+      const e = t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2;
+      const h = startHeading + (endHeading - startHeading) * e;
+      const p = startPitch + (pitch - startPitch) * e;
+      c.lookAt(target, { heading: h, pitch: p, range: range });
+      if (t < 1) orbitTo._raf = requestAnimationFrame(step);
+      else { orbitTo._raf = null; c.lookAtTransform(Cesium.Matrix4.IDENTITY); }
+    };
+    orbitTo._raf = requestAnimationFrame(step);
+  };
+  $id('c-reset').addEventListener('click', () => orbitTo(0, viewer.camera.pitch));
+  $id('c-tiltup').addEventListener('click', () => orbitTo(viewer.camera.heading, Math.min(viewer.camera.pitch + RAD(15), -0.05)));
+  $id('c-tiltdown').addEventListener('click', () => orbitTo(viewer.camera.heading, Math.max(viewer.camera.pitch - RAD(15), -Math.PI/2 + 0.05)));
+  $id('c-rotl').addEventListener('click', () => orbitTo(viewer.camera.heading - RAD(30), viewer.camera.pitch));
+  $id('c-rotr').addEventListener('click', () => orbitTo(viewer.camera.heading + RAD(30), viewer.camera.pitch));
+  // Compass needle always points to screen-north: rotate by -heading so that
+  // north-up => vertical, west-at-top => red points right, east-at-top => left.
+  const compassIcon = document.getElementById('compassIcon');
+  let lastCompassDeg = null;
+  let compassRot = null;
+  scene.postRender.addEventListener(() => {
+    const deg = Cesium.Math.toDegrees(viewer.camera.heading);
+    if (compassRot === null) { compassRot = -deg; }
+    else {
+      let dH = deg - lastCompassDeg;
+      while (dH > 180) dH -= 360;
+      while (dH < -180) dH += 360;
+      compassRot -= dH;
+    }
+    lastCompassDeg = deg;
+    compassIcon.style.transform = 'rotate(' + compassRot + 'deg)';
+  });
+  document.getElementById('status').textContent = '';
+}
+init().catch(e => { document.getElementById('status').textContent = 'Error: '+e.message; console.error(e); });
+</script>
+</body>
+</html>
