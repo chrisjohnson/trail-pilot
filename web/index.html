@@ -184,8 +184,9 @@ async function init() {
   document.getElementById('bl-n').textContent = D.breaks.length;
 
   // Pre-fetch offline: warm the server's pull-through tile cache for this
-  // route (corridor + 1 km margin, zooms 10–15). Afterwards the page renders
-  // entirely from the durable file cache with no internet needed.
+  // route (corridor + 1 km margin, zooms 10–17 = every detail level the
+  // viewer can show). Afterwards the page renders entirely from the durable
+  // file cache with no internet needed.
   const pfBtn = document.getElementById('pf-btn');
   const pfStatus = document.getElementById('pf-status');
   let pfTimer = null;
@@ -193,7 +194,7 @@ async function init() {
   pfBtn.addEventListener('click', async () => {
     pfStop(); pfBtn.disabled = true; pfStatus.textContent = 'starting…';
     try {
-      const r = await fetch('/prefetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zmin: 10, zmax: 15, marginKm: 1 }) });
+      const r = await fetch('/prefetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zmin: 10, zmax: 17, marginKm: 1 }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || 'HTTP ' + r.status);
       const tick = async () => {

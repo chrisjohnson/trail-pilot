@@ -66,8 +66,12 @@ curl localhost:8137/prefetch/1     # {state, total, done, failed, pct}
 
 `route` defaults to the current route. It computes the set of slippy-map
 tiles covering every route point ± `marginKm` at each zoom in range and
-pulls them through the cache with bounded concurrency (12). For the example
-115-mile run, z10–15 @ 1 km margin is 1,248 tiles (~140 MB).
+pulls them through the cache with bounded concurrency (12); any failures get
+sequential retry passes (with backoff) so a rate-limited burst still ends
+clean. Job progress includes a per-zoom breakdown (`byZoom`). The viewer's
+button pre-fills **z10–17** — every detail level the viewer can show, so
+deep zoom stays sharp offline. For the example 115-mile run that's 11,313
+tiles (~135 MB; per-zoom split 16/25/47/102/241/817/2382/7683 for z10..z17).
 
 ### Endpoints
 

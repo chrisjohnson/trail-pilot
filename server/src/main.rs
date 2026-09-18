@@ -390,16 +390,24 @@ async fn prefetch_start(State(state): State<App>, Json(req): Json<PrefetchReq>) 
         return err_response(StatusCode::NOT_FOUND, "no such route");
     };
     let zmin = req.zmin.unwrap_or(10).max(2);
-    let zmax = req.zmax.unwrap_or(15).min(17);
+    let zmax = req.zmax.unwrap_or(17).min(17);
     if zmin > zmax {
         return err_response(StatusCode::BAD_REQUEST, "zmin > zmax");
     }
     let margin_km = req.margin_km.unwrap_or(1.0);
     let urls = prefetch::tile_urls(&entry.points, &state.cfg.tile_origin, zmin, zmax, margin_km);
     let total = urls.len();
+    let mut by_zoom: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    for u in &urls {
+        // origin/z/x/y.png
+        if let Some(zs) = u.rsplit('/').nth(2).and_then(|s| s.parse::<u32>().ok()) {
+            *by_zoom.entry(zs).or_insert(0) += 1;
+        }
+    }
+    let by_zoom: Vec<(u32, usize)> = by_zoom.into_iter().collect();
     let id = state.job_ids.fetch_add(1, Ordering::SeqCst) + 1;
     let params = format!("route={} z={}..{} marginKm={}", slug, zmin, zmax, margin_km);
-    let job = prefetch::Job::new(id, params, total);
+    let job = prefetch::Job::new(id, params, total, by_zoom);
     state.jobs.lock().await.insert(id, job.clone());
     let cache = state.cache.clone();
     tokio::spawn(prefetch::run(job, urls, Arc::new(cache)));

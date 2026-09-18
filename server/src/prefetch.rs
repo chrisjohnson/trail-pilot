@@ -15,13 +15,14 @@ pub struct Job {
     pub params: String,
     pub created: i64,
     pub total: usize,
+    pub by_zoom: Vec<(u32, usize)>,
     pub done: AtomicUsize,
     pub failed: AtomicUsize,
     pub finished: AtomicBool,
 }
 
 impl Job {
-    pub fn new(id: u64, params: String, total: usize) -> Arc<Job> {
+    pub fn new(id: u64, params: String, total: usize, by_zoom: Vec<(u32, usize)>) -> Arc<Job> {
         Arc::new(Job {
             id,
             params,
@@ -30,6 +31,7 @@ impl Job {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0),
             total,
+            by_zoom,
             done: AtomicUsize::new(0),
             failed: AtomicUsize::new(0),
             finished: AtomicBool::new(false),
@@ -50,6 +52,9 @@ impl Job {
             "params": self.params,
             "created": self.created,
             "total": self.total,
+            "byZoom": {
+                "z": self.by_zoom.iter().map(|(z, n)| json!({ "z": z, "tiles": n })).collect::<Vec<_>>(),
+            },
             "done": done,
             "failed": failed,
             "pct": pct,
@@ -91,23 +96,43 @@ pub fn tile_urls(points: &[Pt], origin: &str, zmin: u32, zmax: u32, margin_km: f
     out
 }
 
-/// Run the job: fetch every URL through the cache with bounded concurrency.
-pub async fn run(job: Arc<Job>, urls: Vec<String>, cache: Arc<Cache>) {
+/// One pass: fetch every URL through the cache with bounded concurrency.
+/// Returns the URLs that still failed.
+async fn pass(job: &Arc<Job>, urls: &[String], cache: &Arc<Cache>) -> Vec<String> {
     let sem = Arc::new(tokio::sync::Semaphore::new(CONCURRENCY));
     let mut set = tokio::task::JoinSet::new();
     for url in urls {
         let sem = sem.clone();
         let job = job.clone();
         let cache = cache.clone();
+        let url = url.clone();
         set.spawn(async move {
             let _permit = sem.acquire().await;
             let r = cache.get_or_fetch(&url).await;
             if r.is_err() {
                 job.failed.fetch_add(1, Ordering::SeqCst);
+                Some(url)
+            } else {
+                None
             }
-            job.done.fetch_add(1, Ordering::SeqCst);
         });
     }
-    while set.join_next().await.is_some() {}
+    let mut failed = Vec::new();
+    while let Some(res) = set.join_next().await {
+        if let Ok(Some(u)) = res {
+            failed.push(u);
+        }
+    }
+    failed
+}
+
+/// Run the job: fetch every URL through the cache with bounded concurrency,
+/// then give any failures one sequential retry pass (rate-limit recovery).
+pub async fn run(job: Arc<Job>, urls: Vec<String>, cache: Arc<Cache>) {
+    let mut failed = pass(&job, &urls, &cache).await;
+    while !failed.is_empty() {
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        failed = pass(&job, &failed, &cache).await;
+    }
     job.finished.store(true, Ordering::SeqCst);
 }
