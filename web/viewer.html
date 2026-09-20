@@ -255,7 +255,7 @@ async function init() {
   };
 
   // ---- Speed model (shared by the map route gradient and the scrubber band) ----
-  const TP = window.TP_CONFIG || { slowMph: 20, stopMph: 0 };
+  const TP = window.TP_CONFIG || { slowMph: 20, stopMph: 2 };
   const MS2MPH = 2.2369362920544;
   const rawSpd = new Float64Array(Math.max(1, N - 1));
   for (let i = 0; i < N - 1; i++) {
@@ -556,11 +556,12 @@ async function init() {
   const yOf = (ft) => padT + (1-(ft-minE)/(maxE-minE))*(eH-padT-padB);
   const drawElev = (at) => {
     const ctx = ectx; ctx.clearRect(0,0,eW,eH);
-    // full-height speed gradient background
+    // full-height speed gradient background, dimmed so the panel still reads
+    // dark (cyber look) and the elevation line stays the hero
     for (let k = 0; k < PLOT_N - 1; k++) {
       const x0 = xOf(ptx[k]), x1 = xOf(ptx[k+1]) + 0.5;
       const [r, g, b] = bandRGB[k];
-      ctx.fillStyle = 'rgb(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ')';
+      ctx.fillStyle = 'rgba(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ',0.5)';
       ctx.fillRect(x0, padT, x1 - x0, eH - padT - padB);
     }
     ctx.lineWidth = 1; ctx.font = '10px "Segoe UI",sans-serif';

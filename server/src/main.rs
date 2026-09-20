@@ -39,7 +39,8 @@ pub struct Cfg {
     /// Scrubber speed band: >= slow_mph is green, < slow_mph yellow,
     /// <= stop_mph red (stopped/breaks). TRAILPILOT_SLOW_MPH, default 20.
     pub slow_mph: f64,
-    /// TRAILPILOT_STOP_MPH, default 0 (full stop).
+    /// TRAILPILOT_STOP_MPH, default 2 — a GPS-jitter floor: a parked
+    /// phone still reads 1-2 mph, so 0 would never render as "stopped".
     pub stop_mph: f64,
     pub tz_grid: PathBuf,
 }
@@ -109,7 +110,7 @@ fn parse_args() -> Cfg {
         stop_mph: std::env::var("TRAILPILOT_STOP_MPH")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0),
+            .unwrap_or(2.0),
     };
     if cfg.stop_mph > cfg.slow_mph {
         eprintln!("warning: TRAILPILOT_STOP_MPH ({}) > TRAILPILOT_SLOW_MPH ({}); clamping stop to slow", cfg.stop_mph, cfg.slow_mph);
