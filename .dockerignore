@@ -1,0 +1,5 @@
+.git
+server/target
+*.gpx
+data
+cache

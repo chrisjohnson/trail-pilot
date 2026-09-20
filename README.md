@@ -207,3 +207,20 @@ Known properties worth knowing on a phone:
   `node build/gpx2route.js` output for the same GPX (verified).
 - Regenerate the tz grid: `node build/gen-tz-grid.js` (~17 s, downloads
   geo-tz; `TZ_GRID_RES` overrides resolution).
+
+## Docker / GHCR
+
+Pushes to `main` build and publish **`ghcr.io/chrisjohnson/trail-pilot:latest`**
+(see `.github/workflows/docker.yml`).
+
+    docker pull ghcr.io/chrisjohnson/trail-pilot:latest
+    docker run -d --name trailpilot -p 8137:8137 \
+      -v tp-data:/data -v tp-cache:/cache \
+      -e TRAILPILOT_VEHICLE=jeep \
+      ghcr.io/chrisjohnson/trail-pilot:latest
+
+The viewer is served at the container's port (8137 by default; override with
+`-- --port 1234` after the image name if needed). Two volumes hold all
+state: `/data` (ingested routes) and `/cache` (the durable tile cache —
+mount a persistent volume and pre-fetch at home, exactly as with a local
+install). All the `TRAILPILOT_*` env vars work as-is.
