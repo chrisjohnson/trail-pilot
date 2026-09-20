@@ -14,8 +14,8 @@ cell signal.
 
 That builds the server (first run only), ingests the GPX, and serves:
 
-- http://localhost:8137/ — the viewer (machine)
-- http://<LAN IP>:8137/ — the viewer (phone, same Wi-Fi)
+- http://localhost:8137/ — route index (machine)
+- http://<LAN IP>:8137/ — route index (phone, same Wi-Fi); tap a card for the 3D viewer
 
 Open the page, then hit **Pre-fetch offline** in the banner: it walks the
 route corridor (±1 km, every zoom level 10–17) through the server's
@@ -68,7 +68,7 @@ the cache is just files and survives.
 ```sh
 curl -X POST localhost:8137/prefetch \
   -H 'Content-Type: application/json' \
-  -d '{"route":"friday-morning-hard-trail-run","zmin":10,"zmax":15,"marginKm":1}'
+  -d '{"route":"friday-morning-hard-trail-run","zmin":10,"zmax":17,"marginKm":1}'
 curl localhost:8137/prefetch/1     # {state, total, done, failed, pct}
 ```
 
@@ -125,7 +125,8 @@ trailpilot --port 8137 [--data data] [--cache cache] [--web web]
 
 ```
 run.sh                   one-shot: build + ingest + serve
-web/index.html           the app (single file, Cesium via /cdn)
+web/routes.html          route index (landing page)
+  web/viewer.html        the 3D viewer (single file, Cesium via /cdn)
 server/                  Rust server (crate "trailpilot")
   src/main.rs            HTTP routes, registry, ingest, config
   src/pipeline.rs        GPX parse, break detection, tz lookup (ports build/gpx2route.js)
