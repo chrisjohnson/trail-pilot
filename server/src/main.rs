@@ -36,6 +36,11 @@ pub struct Cfg {
     pub cdn_allow: Vec<String>,
     /// TRAILPILOT_DEBUG=1 — expose the click diagnostics in the viewer.
     pub debug: bool,
+    /// Scrubber speed band: >= slow_mph is green, < slow_mph yellow,
+    /// <= stop_mph red (stopped/breaks). TRAILPILOT_SLOW_MPH, default 20.
+    pub slow_mph: f64,
+    /// TRAILPILOT_STOP_MPH, default 0 (full stop).
+    pub stop_mph: f64,
     pub tz_grid: PathBuf,
 }
 
@@ -51,6 +56,8 @@ impl Clone for Cfg {
             tile_origin: self.tile_origin.clone(),
             cdn_allow: self.cdn_allow.clone(),
             debug: self.debug,
+            slow_mph: self.slow_mph,
+            stop_mph: self.stop_mph,
             tz_grid: self.tz_grid.clone(),
         }
     }
@@ -95,7 +102,19 @@ fn parse_args() -> Cfg {
             .ok()
             .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false),
+        slow_mph: std::env::var("TRAILPILOT_SLOW_MPH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20.0),
+        stop_mph: std::env::var("TRAILPILOT_STOP_MPH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0),
     };
+    if cfg.stop_mph > cfg.slow_mph {
+        eprintln!("warning: TRAILPILOT_STOP_MPH ({}) > TRAILPILOT_SLOW_MPH ({}); clamping stop to slow", cfg.stop_mph, cfg.slow_mph);
+        cfg.stop_mph = cfg.slow_mph;
+    }
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     while let Some(a) = args.first() {
         let a = a.clone();
@@ -267,11 +286,16 @@ async fn static_file(State(state): State<App>, uri: axum::http::Uri) -> Response
         Ok(b) => b,
         Err(_) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, "read error"),
     };
-    // With TRAILPILOT_DEBUG=1, arm the viewer's click diagnostics.
-    if state.cfg.debug && rel == "viewer.html" {
+    // The viewer reads its configuration (speed-band thresholds, debug) from
+    // window.TP_CONFIG, injected here from server environment variables.
+    if rel == "viewer.html" {
         let mut s = String::from_utf8_lossy(&body).into_owned();
         if let Some(i) = s.find("</head>") {
-            s.insert_str(i, "<script>window.TP_DEBUG = true;</script>");
+            let script = format!(
+                "<script>window.TP_CONFIG = {{ slowMph: {}, stopMph: {}, debug: {} }};</script>",
+                state.cfg.slow_mph, state.cfg.stop_mph, state.cfg.debug
+            );
+            s.insert_str(i, &script);
             body = s.into_bytes();
         }
     }

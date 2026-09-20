@@ -104,6 +104,11 @@ trailpilot --port 8137 [--data data] [--cache cache] [--web web]
            [--ingest file.gpx]... [--offline]
            [--tile-origin https://tile.opentopomap.org]
 `TRAILPILOT_DEBUG=1 ./run.sh …` arms the click diagnostics in the viewer (off by default).
+`TRAILPILOT_SLOW_MPH` (default 20) and `TRAILPILOT_STOP_MPH` (default 0) set the
+speed-band thresholds on the route and scrubber: full red at `stop_mph`, full
+green at `slow_mph`, yellow blended between (both are focal points of the
+gradient, not hard cutoffs). They are injected into the viewer at serve time,
+so changing them needs no re-ingest.
            [--cdn-allow unpkg.com] [--tz-grid build/tz-grid.json]
 ```
 

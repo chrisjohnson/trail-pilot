@@ -254,6 +254,39 @@ async function init() {
              flat[i*4+2]+frac*(flat[(i+1)*4+2]-flat[i*4+2]) ];
   };
 
+  // ---- Speed model (shared by the map route gradient and the scrubber band) ----
+  const TP = window.TP_CONFIG || { slowMph: 20, stopMph: 0 };
+  const MS2MPH = 2.2369362920544;
+  const rawSpd = new Float64Array(Math.max(1, N - 1));
+  for (let i = 0; i < N - 1; i++) {
+    const dt = timeArr[i+1] - timeArr[i];
+    rawSpd[i] = dt > 0 ? (distArr[i+1] - distArr[i]) / dt * MS2MPH : 0;
+  }
+  const SMOOTH = 10; // ~10 s window — 1 Hz GPS point-to-point speed is very noisy
+  const spd = new Float64Array(Math.max(1, N - 1));
+  for (let i = 0; i < N - 1; i++) {
+    let s = 0, c = 0;
+    for (let j = Math.max(0, i - SMOOTH); j <= Math.min(N - 2, i + SMOOTH); j++) { s += rawSpd[j]; c++; }
+    spd[i] = s / c;
+  }
+  const speedAt = (t) => {
+    let i = timeToIndex(t); if (i < 0) i = 0; if (i > N - 2) i = N - 2;
+    if (N > 1 && timeArr[i+1] - timeArr[i] > 600) return 0; // break gap = stopped
+    return spd[i];
+  };
+  // Gradient with the ENV thresholds as focal points: full red at stopMph,
+  // full yellow halfway, full green at slowMph (clamped above).
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const speedRGB = (mph) => {
+    const s = TP.stopMph, e = TP.slowMph;
+    if (e <= s) return mph <= s ? [255, 82, 82] : [67, 217, 173];
+    if (mph <= s) return [255, 82, 82];
+    if (mph >= e) return [67, 217, 173];
+    const mid = (s + e) / 2;
+    if (mph <= mid) { const t = (mph - s) / (mid - s); return [lerp(255, 255, t), lerp(82, 210, t), lerp(82, 63, t)]; }
+    const t = (mph - mid) / (e - mid); return [lerp(255, 67, t), lerp(210, 217, t), lerp(63, 173, t)];
+  };
+
   // Flat ellipsoid terrain. Resolves instantly so the globe's imagery surface
   // starts driving tile requests immediately. (The previous direct-URL
   // CesiumTerrainProvider never resolved without a valid token, and in 1.125 the
@@ -284,26 +317,39 @@ async function init() {
   scene.globe.enableLighting = false; // disabled while diagnosing imagery
   scene.globe.showGroundAtmosphere = true;
   scene.screenSpaceCameraController.enableDamping = true;
+  // Re-render only when something changes (camera, entities) — big battery
+  // win in view mode; the screen-space controller requests renders during its
+  // own gestures/flyTos, and our custom camera loops call requestRender().
+  scene.requestRenderMode = 'demand';
 
   const routeFlat = new Float64Array(N*3);   // lon,lat,ele — 3 per point
   for (let i=0;i<N;i++){ routeFlat[i*3]=flat[i*4]; routeFlat[i*3+1]=flat[i*4+1]; routeFlat[i*3+2]=flat[i*4+2]; }
   const routeLonLat = new Float64Array(N*2);   // lon,lat — 2 per point, for clamped-to-ground polylines
   for (let i=0;i<N;i++){ routeLonLat[i*2]=flat[i*4]; routeLonLat[i*2+1]=flat[i*4+1]; }
   // Halos are solid semi-transparent lines (same reliable material as the black core).
-  // Orange halo is static over the FULL route; only the green "traveled" halo regrows,
-  // so we never rewrite the large orange geometry during playback (no flicker).
-  const glowUntraveled = viewer.entities.add({
-    polyline: {
-      positions: Cesium.Cartesian3.fromDegreesArray(routeLonLat),   // full route, never updated
-      width: 26, clampToGround: true,
-      material: Cesium.Color.fromCssColorString('rgba(255,122,26,0.5)')
-    }
-  });
+  // The full-route halo is a SPEED GRADIENT (red stopped -> yellow -> green at
+  // slowMph), drawn as static chunked polylines — each chunk colored by its
+  // midpoint speed; only the "traveled" halo regrows during playback (no flicker).
+  const K = Math.min(160, N - 1);
+  const chunkStep = (N - 1) / K;
+  for (let j = 0; j < K; j++) {
+    const i0 = Math.floor(j * chunkStep);
+    const i1 = Math.min(N - 1, Math.floor((j + 1) * chunkStep) + 1);
+    const midT = (timeArr[i0] + timeArr[Math.max(i0, i1 - 1)]) / 2;
+    const [r, g, b] = speedRGB(speedAt(midT));
+    viewer.entities.add({
+      polyline: {
+        positions: Cesium.Cartesian3.fromDegreesArray(routeLonLat.subarray(i0 * 2, i1 * 2)),
+        width: 26, clampToGround: true,
+        material: Cesium.Color.fromBytes(r, g, b, 128)
+      }
+    });
+  }
   const glowTraveled = viewer.entities.add({
     polyline: {
       positions: Cesium.Cartesian3.fromDegreesArray(routeLonLat.subarray(0,2)),
       width: 26, clampToGround: true,
-      material: Cesium.Color.fromCssColorString('rgba(57,255,20,0.55)')
+      material: Cesium.Color.fromCssColorString('rgba(186,140,255,0.55)')
     }
   });
   const routeCore = viewer.entities.add({
@@ -491,6 +537,12 @@ async function init() {
   minE = Math.floor((minE-40)/100)*100; maxE = Math.ceil((maxE+40)/100)*100;
   const PLOT_N = 400, ptx = new Float64Array(PLOT_N), pty = new Float64Array(PLOT_N);
   for (let k=0;k<PLOT_N;k++){ const t=k/(PLOT_N-1)*total; ptx[k]=t; pty[k]=elevAtTime(t); }
+  // ---- Scrubber speed band: same gradient as the map route (ENV thresholds as focal points) ----
+  const bandRGB = new Array(PLOT_N);
+  for (let k = 0; k < PLOT_N; k++) bandRGB[k] = speedRGB(speedAt(ptx[k]));
+  document.getElementById('tl-legend').innerHTML =
+    'Speed <span style="display:inline-block;width:84px;height:8px;border-radius:4px;background:linear-gradient(90deg,#ff5252,#FFD23F,#43d9ad);vertical-align:middle;margin:0 7px"></span>'
+    + TP.stopMph + ' mph stopped &rarr; &ge; ' + TP.slowMph + ' mph';
   let eW = 600;
   const sizeElev = () => {
     const dpr = window.devicePixelRatio || 1;
@@ -504,6 +556,15 @@ async function init() {
   const yOf = (ft) => padT + (1-(ft-minE)/(maxE-minE))*(eH-padT-padB);
   const drawElev = (at) => {
     const ctx = ectx; ctx.clearRect(0,0,eW,eH);
+    // speed band background: full-height gradient tint + solid ribbon along the bottom
+    for (let k = 0; k < PLOT_N - 1; k++) {
+      const x0 = xOf(ptx[k]), x1 = xOf(ptx[k+1]) + 0.5;
+      const [r, g, b] = bandRGB[k];
+      ctx.fillStyle = 'rgba(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ',0.15)';
+      ctx.fillRect(x0, padT, x1 - x0, eH - padT - padB);
+      ctx.fillStyle = 'rgb(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ')';
+      ctx.fillRect(x0, eH - padB - 7, x1 - x0, 7);
+    }
     ctx.lineWidth = 1; ctx.font = '10px "Segoe UI",sans-serif';
     ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.fillStyle = 'rgba(255,255,255,0.42)';
     for (let e=Math.ceil(minE/200)*200; e<=maxE; e+=200){ const y=yOf(e); ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(eW-padR,y); ctx.stroke(); ctx.fillText(e, 3, y+3); }
@@ -534,7 +595,7 @@ async function init() {
     runner.position = rPos; runnerGlow.position = rPos;
     milestoneRead.textContent = (distArr[i]/1609.344).toFixed(2) + ' mi';
     timeRead.textContent = fmtClock(at);
-    // Regrow the green halo a few times a second (a clampToGround polyline that
+    // Regrow the purple (traveled) halo a few times a second (a clampToGround polyline that
     // is rewritten every frame never gets a frame to draw).
     if (now === undefined || now - lastGlow > 130) {
       lastGlow = now || 0;
@@ -632,8 +693,9 @@ async function init() {
       const h = startHeading + (endHeading - startHeading) * e;
       const p = startPitch + (pitch - startPitch) * e;
       c.lookAt(target, { heading: h, pitch: p, range: range });
+      viewer.scene.requestRender();
       if (t < 1) orbitTo._raf = requestAnimationFrame(step);
-      else { orbitTo._raf = null; c.lookAtTransform(Cesium.Matrix4.IDENTITY); }
+      else { orbitTo._raf = null; c.lookAtTransform(Cesium.Matrix4.IDENTITY); viewer.scene.requestRender(); }
     };
     orbitTo._raf = requestAnimationFrame(step);
   };
