@@ -60,8 +60,7 @@ pub struct RouteEntry {
 }
 
 pub struct Registry {
-    pub current: Option<String>,
-    pub entries: HashMap<String, Arc<RouteEntry>>,
+        pub entries: HashMap<String, Arc<RouteEntry>>,
 }
 
 #[derive(Clone)]
@@ -191,9 +190,7 @@ async fn ingest_gpx(state: &App, gpx: &[u8]) -> Result<Value, String> {
             slug.clone(),
             Arc::new(RouteEntry { slug: slug.clone(), data: res.data.clone(), points: res.points.clone() }),
         );
-        reg.current = Some(slug.clone());
     }
-    tokio::fs::write(state.cfg.data_dir.join("current"), &slug).await.ok();
     Ok(json!({
         "slug": slug,
         "name": name,
@@ -203,6 +200,7 @@ async fn ingest_gpx(state: &App, gpx: &[u8]) -> Result<Value, String> {
         "startUTC": res.data["startUTC"],
         "points": res.data["route"].as_array().map(|a| a.len()).unwrap_or(0),
         "breaks": res.data["breaks"].as_array().map(|a| a.len()).unwrap_or(0),
+        "url": format!("/viewer?route={slug}"),
         "message": "ok",
     }))
 }
@@ -237,14 +235,6 @@ async fn load_registry(state: &App) {
             );
         }
     }
-    if let Ok(cur) = std::fs::read_to_string(state.cfg.data_dir.join("current")) {
-        let cur = cur.trim().to_string();
-        if state.routes.lock().await.entries.contains_key(&cur) {
-            state.routes.lock().await.current = Some(cur);
-        }
-    } else if let Some(first) = state.routes.lock().await.entries.keys().next().cloned() {
-        state.routes.lock().await.current = Some(first);
-    }
 }
 
 // ---------------- handlers ----------------
@@ -273,6 +263,14 @@ async fn static_file(State(state): State<App>, uri: axum::http::Uri) -> Response
     ([(axum::http::header::CONTENT_TYPE, content_type(&p).to_string())], body).into_response()
 }
 
+fn find_route(reg: &Registry, want: &str) -> Option<std::sync::Arc<RouteEntry>> {
+    let wl = want.to_lowercase();
+    reg.entries.values().find(|e| {
+        e.slug == want
+            || e.data["name"].as_str().map(|x| x.to_lowercase() == wl).unwrap_or(false)
+    }).cloned()
+}
+
 #[derive(Deserialize)]
 struct RouteQuery {
     route: Option<String>,
@@ -280,24 +278,13 @@ struct RouteQuery {
 
 /// Current route data, or a named one: ?route=<slug> (or the display name).
 async fn route_data_current(State(state): State<App>, Query(q): Query<RouteQuery>) -> Response {
-    let reg = state.routes.lock().await;
-    let entry = match &q.route {
-        Some(want) if !want.is_empty() => {
-            let wl = want.to_lowercase();
-            reg.entries.values().find(|e| {
-                e.slug == *want
-                    || e.data["name"].as_str().map(|n| n.to_lowercase() == wl).unwrap_or(false)
-            })
-            .cloned()
-        }
-        _ => reg.current.as_ref().and_then(|s| reg.entries.get(s)).cloned(),
+    let Some(want) = q.route.filter(|w| !w.is_empty()) else {
+        return err_response(StatusCode::NOT_FOUND, "no route specified — use ?route=<slug-or-name>");
     };
-    match entry {
+    let reg = state.routes.lock().await;
+    match find_route(&reg, &want) {
         Some(e) => Json(e.data.clone()).into_response(),
-        None => err_response(
-            StatusCode::NOT_FOUND,
-            &q.route.map(|w| format!("no such route: {w}")).unwrap_or_else(|| "no route ingested yet — POST /routes/ingest".into()),
-        ),
+        None => err_response(StatusCode::NOT_FOUND, &format!("no such route: {want}")),
     }
 }
 
@@ -316,12 +303,16 @@ async fn routes_list(State(state): State<App>) -> Response {
                 "startUTC": e.data["startUTC"],
                 "points": e.data["route"].as_array().map(|a| a.len()).unwrap_or(0),
                 "breaks": e.data["breaks"].as_array().map(|a| a.len()).unwrap_or(0),
-                "current": Some(&e.slug) == reg.current.as_ref(),
             })
         })
         .collect();
-    items.sort_by(|a, b| a["slug"].as_str().unwrap().cmp(b["slug"].as_str().unwrap()));
-    Json(json!({ "current": reg.current, "routes": items })).into_response()
+    // newest first (routes without a start time last), then by name
+    items.sort_by(|a, b| {
+        let ka = a["startUTC"].as_str().filter(|s| *s != "NaN").unwrap_or("");
+        let kb = b["startUTC"].as_str().filter(|s| *s != "NaN").unwrap_or("");
+        kb.cmp(ka).then_with(|| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")))
+    });
+    Json(json!({ "routes": items })).into_response()
 }
 
 async fn route_data_slug(State(state): State<App>, Path(slug): Path<String>) -> Response {
@@ -401,16 +392,12 @@ struct PrefetchReq {
 }
 
 async fn prefetch_start(State(state): State<App>, Json(req): Json<PrefetchReq>) -> Response {
-    let slug = match req.route {
-        Some(s) => s,
-        None => state.routes.lock().await.current.clone().unwrap_or_default(),
+    let Some(want) = req.route.filter(|s| !s.is_empty()) else {
+        return err_response(StatusCode::BAD_REQUEST, "no route specified — include route (slug or name) in the request");
     };
-    let entry = {
-        let reg = state.routes.lock().await;
-        reg.entries.get(&slug).cloned()
-    };
-    let Some(entry) = entry else {
-        return err_response(StatusCode::NOT_FOUND, "no such route");
+    let reg = state.routes.lock().await;
+    let Some(entry) = find_route(&reg, &want) else {
+        return err_response(StatusCode::NOT_FOUND, &format!("no such route: {want}"));
     };
     let zmin = req.zmin.unwrap_or(10).max(2);
     let zmax = req.zmax.unwrap_or(17).min(17);
@@ -440,7 +427,7 @@ async fn prefetch_start(State(state): State<App>, Json(req): Json<PrefetchReq>) 
     }
     let by_zoom: Vec<(u32, usize)> = by_zoom.into_iter().collect();
     let id = state.job_ids.fetch_add(1, Ordering::SeqCst) + 1;
-    let params = format!("route={} z={}..{} marginKm={}", slug, zmin, zmax, margin_km);
+    let params = format!("route={} z={}..{} marginKm={}", want, zmin, zmax, margin_km);
     let job = prefetch::Job::new(id, params, total, by_zoom);
     state.jobs.lock().await.insert(id, job.clone());
     let cache = state.cache.clone();
@@ -474,7 +461,6 @@ async fn healthz(State(state): State<App>) -> Response {
         "cacheFiles": files,
         "cacheBytes": bytes,
         "routes": reg.entries.len(),
-        "current": reg.current,
     }))
         .into_response()
 }
@@ -520,7 +506,7 @@ async fn main() {
     let state = App {
         web_root: web_root.clone(),
         cache,
-        routes: Arc::new(Mutex::new(Registry { current: None, entries: HashMap::new() })),
+        routes: Arc::new(Mutex::new(Registry { entries: HashMap::new() })),
         jobs: Arc::new(Mutex::new(HashMap::new())),
         job_ids: Arc::new(AtomicU64::new(0)),
         http,

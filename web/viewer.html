@@ -162,12 +162,17 @@ async function init() {
       window.Cesium.basePath = '/cdn/unpkg.com/cesium@1.125.0/Build/Cesium/';
     }
   let D;
+  const routeParam = new URLSearchParams(location.search).get('route');
+  if (!routeParam) {
+    document.getElementById('status').innerHTML = 'No route selected — <a href="/" style="color:var(--accent)">pick one from the index</a>';
+    throw new Error('no route param');
+  }
   try {
-    const routeParam = new URLSearchParams(location.search).get('route');
-    const r = await fetch('route_data.json' + (routeParam ? '?route=' + encodeURIComponent(routeParam) : ''), {cache:'no-store'});
+    const r = await fetch('route_data.json?route=' + encodeURIComponent(routeParam), {cache:'no-store'});
+    if (!r.ok) throw new Error((await r.text()) || 'HTTP ' + r.status);
     D = await r.json();
   } catch (e) {
-    document.getElementById('status').textContent = 'Failed to load route_data.json'; throw e;
+    document.getElementById('status').textContent = 'Failed to load route: ' + e.message; throw e;
   }
 
   const fmtDur = (s) => { s=Math.round(s); const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);
@@ -198,7 +203,7 @@ async function init() {
   pfBtn.addEventListener('click', async () => {
     pfStop(); pfBtn.disabled = true; pfStatus.textContent = 'starting…';
     try {
-      const r = await fetch('/prefetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zmin: 10, zmax: 17, marginKm: 1 }) });
+      const r = await fetch('/prefetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ route: routeParam, zmin: 10, zmax: 17, marginKm: 1 }) });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || 'HTTP ' + r.status);
       const tick = async () => {
@@ -594,7 +599,7 @@ async function init() {
   for (let i=0;i<N;i+=8){ routePts.push(Cesium.Cartesian3.fromDegrees(flat[i*4], flat[i*4+1], 0)); }
   const routeBS = Cesium.BoundingSphere.fromPoints(routePts);
   viewer.camera.flyToBoundingSphere(routeBS, {
-    offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-12), routeBS.radius*2.9),
+    offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-27), routeBS.radius*2.9),
     duration: 2.0
   });
 

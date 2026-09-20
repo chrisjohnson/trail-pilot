@@ -72,7 +72,7 @@ curl -X POST localhost:8137/prefetch \
 curl localhost:8137/prefetch/1     # {state, total, done, failed, pct}
 ```
 
-`route` defaults to the current route. It computes the set of slippy-map
+`route` (slug or display name) is required. It computes the set of slippy-map
 tiles covering every route point ± `marginKm` at each zoom in range and
 pulls them through the cache with bounded concurrency (12); any failures get
 sequential retry passes (with backoff) so a rate-limited burst still ends
@@ -86,8 +86,8 @@ tiles (~135 MB; per-zoom split 16/25/47/102/241/817/2382/7683 for z10..z17).
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | the web viewer (static) |
-| `GET /route_data.json` | current route data, or `?route=<slug-or-name>` for a named one (what the viewer fetches) |
-| `POST /routes/ingest` | ingest a GPX (raw body) → added to routes, becomes current |
+| `GET /route_data.json?route=<slug-or-name>` | one route's data (what the viewer fetches) |
+| `POST /routes/ingest` | ingest a GPX (raw body) → added to the route list (the index page has a **Load GPX** button + drag-and-drop) |
 | `GET /routes` | list ingested routes |
 | `GET /routes/{slug}/data.json` | one route's data |
 | `GET /tiles/otm/{z}/{x}/{y}.png` | OpenTopoMap tile via pull-through cache |
@@ -135,7 +135,7 @@ server/                  Rust server (crate "trailpilot")
 build/gpx2route.js       standalone Node CLI converter (parity-checked vs server)
 build/tz-grid.json       offline coord→IANA-timezone grid (generated artifact)
 build/gen-tz-grid.js     regenerates the grid (needs network; rarely)
-data/                    ingested routes + "current" (gitignored)
+data/                    ingested routes (gitignored)
 cache/                   durable tile/CDN file cache (gitignored)
 input/                   drop GPX files here
 ```

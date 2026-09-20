@@ -13,18 +13,22 @@
   html, body { margin:0; min-height:100%; font-family:"Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif; color:var(--ink);
     background: radial-gradient(1200px 700px at 20% -10%, #16233f 0%, #0a0f1e 55%, #060912 100%); }
   .wrap { max-width: 860px; margin: 0 auto; padding: 42px 20px 60px; }
-  header { display:flex; align-items:baseline; gap:14px; margin-bottom: 6px; }
+  header { display:flex; align-items:center; gap:14px; margin-bottom: 6px; flex-wrap: wrap; }
   header h1 { font-size: 26px; margin: 0; font-weight: 650; letter-spacing: 0.4px; }
   header h1 .dot { color: var(--line); }
   #count { color: var(--muted); font-size: 14px; }
+  #load-btn { margin-left:auto; font-size:14px; font-weight:600; color:var(--ink); background:rgba(255,107,59,0.16); border:1px solid var(--line);
+    border-radius:10px; padding:9px 16px; cursor:pointer; transition:background .12s ease; }
+  #load-btn:hover { background:rgba(255,107,59,0.3); }
+  #load-btn:disabled { opacity:.5; cursor:default; }
   .hint { color: var(--muted); font-size: 13px; margin: 0 0 26px; }
   .card { display: block; text-decoration: none; color: var(--ink); background: var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45);
     padding: 16px 18px; margin-bottom: 12px; transition: border-color .12s ease, transform .12s ease; }
   .card:hover { border-color: var(--line); transform: translateY(-1px); }
+  .card.flash { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(67,217,173,0.35), 0 10px 30px rgba(0,0,0,0.45); }
   .row1 { display:flex; align-items:center; gap:10px; }
   .row1 .name { font-size: 17px; font-weight: 600; letter-spacing: 0.3px; }
-  .badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); border: 1px solid rgba(67,217,173,0.5); border-radius: 99px; padding: 2px 9px; }
   .row2 { color: var(--muted); font-size: 13px; margin-top: 5px; }
   .row3 { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; }
   .row3 span b { color: var(--ink); font-weight: 600; }
@@ -33,6 +37,17 @@
   .empty { color: var(--muted); font-size: 14px; line-height: 1.7; background: var(--panel); border: 1px dashed rgba(255,255,255,0.15); border-radius: 14px; padding: 26px; }
   .empty code { color: var(--ink); background: rgba(255,255,255,0.07); border-radius: 6px; padding: 2px 6px; font-size: 12.5px; }
   #list:empty { display: none; }
+  #drop-overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 100;
+    background: rgba(6,9,18,0.82); backdrop-filter: blur(4px); border: 3px dashed var(--line); border-radius: 4px;
+    font-size: 22px; font-weight: 600; color: var(--ink); pointer-events: none; }
+  #drop-overlay.on { display: flex; }
+  #toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(20px); opacity: 0; transition: all .25s ease;
+    background: var(--panel); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 12px 18px; z-index: 101;
+    font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); max-width: 90vw; }
+  #toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #toast.ok { border-color: var(--accent); }
+  #toast.err { border-color: var(--line); }
+  #toast a { color: var(--accent); text-decoration: none; font-weight: 600; }
   @media (max-width: 560px) { .wrap { padding-top: 26px; } .row3 { gap: 5px 14px; } }
 </style>
 </head>
@@ -41,10 +56,14 @@
   <header>
     <h1>trail-pilot<span class="dot">.</span></h1>
     <span id="count"></span>
+    <button id="load-btn">+ Load GPX</button>
   </header>
-  <p class="hint">Ingested routes. Pick one to open it in the 3D viewer.</p>
+  <input type="file" id="file-input" accept=".gpx,application/gpx+xml,application/xml" multiple hidden>
+  <p class="hint">Ingested routes — pick one to open it in the 3D viewer. Drop GPX files anywhere on this page (or use “Load GPX”) to add more.</p>
   <div id="list"><div class="empty">Loading…</div></div>
 </div>
+<div id="drop-overlay">drop GPX files to load</div>
+<div id="toast"></div>
 <script>
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtDate(iso, tz) {
@@ -55,7 +74,14 @@ function fmtDate(iso, tz) {
       + ' at ' + d.toLocaleTimeString('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true });
   } catch (e) { return iso; }
 }
-async function init() {
+let toastTimer = null;
+function toast(html, cls) {
+  const t = document.getElementById('toast');
+  t.innerHTML = html; t.className = 'on ' + cls;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, 6000);
+}
+async function init(flashSlug) {
   const list = document.getElementById('list');
   let j;
   try { j = await (await fetch('/routes', { cache: 'no-store' })).json(); }
@@ -63,16 +89,14 @@ async function init() {
   const routes = j.routes || [];
   document.getElementById('count').textContent = routes.length + (routes.length === 1 ? ' route' : ' routes');
   if (!routes.length) {
-    list.innerHTML = '<div class="empty">No routes yet. Ingest a GPX with:<br><br>'
-      + '<code>curl -X POST --data-binary @your-run.gpx http://localhost:PORT/routes/ingest</code><br><br>'
-      + 'or pass it to <code>./run.sh</code> at startup.</div>';
+    list.innerHTML = '<div class="empty">No routes yet — hit <b>“+ Load GPX”</b> above or drop a GPX file anywhere on this page.</div>';
     return;
   }
   list.innerHTML = routes.map(rt =>
-    '<a class="card" href="/viewer?route=' + encodeURIComponent(rt.slug) + '">'
+    '<a class="card' + (rt.slug === flashSlug ? ' flash' : '') + '" id="card-' + esc(rt.slug) + '" href="/viewer?route=' + encodeURIComponent(rt.slug) + '">'
     + '<span class="go">view →</span>'
-    + '<div class="row1"><span class="name">' + esc(rt.name) + '</span>' + (rt.current ? '<span class="badge">current</span>' : '') + '</div>'
-    + (rt.startUTC ? '<div class="row2">' + esc(fmtDate(rt.startUTC, rt.timezone || 'UTC')) + '</div>' : '')
+    + '<div class="row1"><span class="name">' + esc(rt.name) + '</span></div>'
+    + (rt.startUTC && rt.startUTC !== 'NaN' ? '<div class="row2">' + esc(fmtDate(rt.startUTC, rt.timezone || 'UTC')) + '</div>' : '')
     + '<div class="row3">'
     + '<span><b>' + rt.totalDistanceMiles + '</b><i>mi</i></span>'
     + '<span><b>' + esc(rt.totalDurationStr) + '</b><i>moving</i></span>'
@@ -80,7 +104,43 @@ async function init() {
     + '<span><b>' + (rt.points ?? 0).toLocaleString() + '</b><i>points</i></span>'
     + '</div></a>'
   ).join('');
+  if (flashSlug) {
+    const c = document.getElementById('card-' + flashSlug);
+    if (c) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
+async function ingestFiles(files) {
+  const btn = document.getElementById('load-btn');
+  btn.disabled = true; btn.textContent = 'loading…';
+  let lastSlug = null, okCount = 0; const errs = [];
+  for (const f of files) {
+    try {
+      const r = await fetch('/routes/ingest', { method: 'POST', body: f });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || j.message || (await r.text().catch(() => 'HTTP ' + r.status)));
+      lastSlug = j.slug; okCount++;
+      toast('<b>' + esc(j.name) + '</b> loaded — ' + j.totalDistanceMiles + ' mi, ' + j.totalDurationStr + '. <a href="' + esc(j.url) + '">Open it →</a>', 'ok');
+    } catch (e) {
+      errs.push(f.name + ': ' + e.message);
+    }
+  }
+  btn.disabled = false; btn.textContent = '+ Load GPX';
+  if (errs.length) toast(errs.map(esc).join('<br>'), 'err');
+  if (okCount) await init(lastSlug);
+}
+document.getElementById('load-btn').addEventListener('click', () => document.getElementById('file-input').click());
+document.getElementById('file-input').addEventListener('change', (e) => { ingestFiles([...e.target.files]); e.target.value = ''; });
+// drag & drop anywhere on the page
+let dragDepth = 0;
+window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; document.getElementById('drop-overlay').classList.add('on'); });
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('dragleave', (e) => { e.preventDefault(); if (--dragDepth <= 0) { dragDepth = 0; document.getElementById('drop-overlay').classList.remove('on'); } });
+window.addEventListener('drop', (e) => {
+  e.preventDefault(); dragDepth = 0; document.getElementById('drop-overlay').classList.remove('on');
+  const files = [...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.gpx') || f.type.includes('gpx'));
+  if (files.length) ingestFiles(files);
+  else toast('Only .gpx files can be loaded.', 'err');
+});
 init();
 </script>
 </body>
