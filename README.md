@@ -110,6 +110,11 @@ speed-band thresholds on the route and scrubber: full red at `stop_mph`, full
 green at `slow_mph`, yellow blended between (both are focal points of the
 gradient, not hard cutoffs). They are injected into the viewer at serve time,
 so changing them needs no re-ingest.
+`TRAILPILOT_VEHICLE` (default `jeep`) picks the runner marker — a top-down
+convoy: **subaru** = teal ~2001 Forester towing the JKU, which tows a blue
+Tacoma; **jeep** = red JKU (37" mud tires, roof rack, metal tube fenders)
+towing the Tacoma; **toyota** = the blue Tacoma, being towed. Injected via
+`window.TP_CONFIG` at serve time, so switching is also a restart-only change.
            [--cdn-allow unpkg.com] [--tz-grid build/tz-grid.json]
 ```
 
