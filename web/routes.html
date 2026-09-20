@@ -115,7 +115,7 @@ async function ingestFiles(files) {
   let lastSlug = null, okCount = 0; const errs = [];
   for (const f of files) {
     try {
-      const r = await fetch('/routes/ingest', { method: 'POST', body: f });
+      const r = await fetch('/routes/ingest', { method: 'POST', body: f, headers: { 'X-Filename': f.name } });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || j.message || (await r.text().catch(() => 'HTTP ' + r.status)));
       lastSlug = j.slug; okCount++;

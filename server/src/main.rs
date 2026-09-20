@@ -181,9 +181,9 @@ fn err_response(status: StatusCode, msg: &str) -> Response {
 
 // ---------------- route registry / ingest ----------------
 
-async fn ingest_gpx(state: &App, gpx: &[u8]) -> Result<Value, String> {
+async fn ingest_gpx(state: &App, gpx: &[u8], name_hint: Option<&str>) -> Result<Value, String> {
     let xml = String::from_utf8_lossy(gpx).to_string();
-    let res = pipeline::process(&xml, state.tz_grid.as_deref())?;
+    let res = pipeline::process(&xml, state.tz_grid.as_deref(), name_hint)?;
     let name = res.data["name"].as_str().unwrap_or("route").to_string();
     let slug = slugify(&name);
     let dir = state.cfg.data_dir.join("routes").join(&slug);
@@ -338,8 +338,10 @@ async fn route_data_slug(State(state): State<App>, Path(slug): Path<String>) -> 
     }
 }
 
-async fn routes_ingest(State(state): State<App>, body: Bytes) -> Response {
-    match ingest_gpx(&state, &body).await {
+async fn routes_ingest(State(state): State<App>, headers: axum::http::HeaderMap, body: Bytes) -> Response {
+    // The UI sends the original filename so a nameless GPX still gets a title.
+    let hint = headers.get("x-filename").and_then(|v| v.to_str().ok()).filter(|s| !s.is_empty());
+    match ingest_gpx(&state, &body, hint).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => err_response(StatusCode::BAD_REQUEST, &e),
     }
@@ -533,7 +535,7 @@ async fn main() {
 
     if let Some(p) = &cfg.ingest {
         match tokio::fs::read(p).await {
-            Ok(b) => match ingest_gpx(&state, &b).await {
+            Ok(b) => match ingest_gpx(&state, &b, p.file_name().map(|f| f.to_string_lossy().into_owned()).as_deref()).await {
                 Ok(v) => println!("ingested: {}", v),
                 Err(e) => eprintln!("ingest failed: {e}"),
             },

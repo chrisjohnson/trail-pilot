@@ -62,8 +62,35 @@ function parsePoints(xml, el) {
   }
   return pts;
 }
+function cdataText(t) {
+  t = (t || '').trim();
+  if (t.startsWith('<![CDATA[')) {
+    const i = t.lastIndexOf(']]>');
+    return i >= 0 ? t.slice('<![CDATA['.length, i) : t.slice('<![CDATA['.length);
+  }
+  return t;
+}
+// Title chain: <name>/<title> inside <trk>/<rte> (any child order, CDATA-aware),
+// then anywhere in the file, then the caller's filename hint, then a generic label.
+function extractName(xml) {
+  const nameRe = /<name>([^<]*(?:<!\[CDATA\[[^]]*\]\]>[^<]*)*)<\/name>/;
+  const titleRe = /<title>([^<]*(?:<!\[CDATA\[[^]]*\]\]>[^<]*)*)<\/title>/;
+  const open = xml.match(/<(?:trk|rte)\b[^>]*>/);
+  if (open) {
+    const start = open.index + open[0].length;
+    const e1 = xml.indexOf('</trk>', start), e2 = xml.indexOf('</rte>', start);
+    let end = Math.min(e1 < 0 ? Infinity : e1, e2 < 0 ? Infinity : e2);
+    if (!isFinite(end)) end = xml.length;
+    const inner = xml.slice(start, end);
+    let m = inner.match(nameRe); if (m && cdataText(m[1])) return cdataText(m[1]);
+    m = inner.match(titleRe); if (m && cdataText(m[1])) return cdataText(m[1]);
+  }
+  let m = xml.match(nameRe); if (m && cdataText(m[1])) return cdataText(m[1]);
+  m = xml.match(titleRe); if (m && cdataText(m[1])) return cdataText(m[1]);
+  return '';
+}
 function parseGpx(xml) {
-  const name = (xml.match(/<(?:trk|rte)>\s*<name>([^<]*)<\/name>/) || xml.match(/<name>([^<]*)<\/name>/) || [])[1] || 'Route';
+  let name = extractName(xml);
   for (const el of ['trkpt', 'rtept', 'wpt']) {
     const pts = parsePoints(xml, el);
     if (pts.length) return { name, pts };
@@ -109,7 +136,12 @@ function main() {
   const input = positional[0];
   if (!input) { console.error('Usage: node gpx2route.js <input.gpx> [output.json] [--tz=Area/Location]'); process.exit(1); }
   const xml = fs.readFileSync(input, 'utf8');
-  const { name, pts } = parseGpx(xml);
+  let { name, pts } = parseGpx(xml);
+  if (!(name || '').trim()) {
+    const base = require('path').basename(input, '.gpx').trim();
+    if (base) name = base;
+  }
+  if (!(name || '').trim()) name = 'Untitled Route';
   const t0 = pts[0].t;
   const { breaks, totalM, pD } = detectBreaks(pts);
   const totalSec = Math.round((pts[pts.length-1].t - t0) / 1000);

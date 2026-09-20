@@ -167,14 +167,60 @@ fn parse_points(xml: &str, el: &str) -> Vec<Pt> {
     pts
 }
 
+/// Title extraction, most-specific first:
+/// 1) a <name> inside <trk>/<rte> (any child order, any tag attributes)
+/// 2) a <title> inside <trk>/<rte> (KML-style exports)
+/// 3) the first <name> anywhere in the file
+/// 4) the first <title> anywhere in the file
+/// Callers fall back to the source filename when this returns "".
+/// Element content that may be CDATA-wrapped (GaiaGPS-for-Android style):
+/// <name><![CDATA[foo]]></name> as well as plain <name>foo</name>.
+fn cdata_text(content: &str) -> String {
+    let t = content.trim();
+    if let Some(rest) = t.strip_prefix("<![CDATA[") {
+        match rest.rfind("]]>") {
+            Some(i) => rest[..i].to_string(),
+            None => rest.to_string(),
+        }
+    } else {
+        t.to_string()
+    }
+}
+
+fn extract_name(xml: &str) -> String {
+    let name_re = Regex::new(r#"<name>([^<]*(?:<!\[CDATA\[[^]]*\]\]>[^<]*)*)</name>"#).unwrap();
+    let title_re = Regex::new(r#"<title>([^<]*(?:<!\[CDATA\[[^]]*\]\]>[^<]*)*)</title>"#).unwrap();
+    let open_re = Regex::new(r#"<(?:trk|rte)\b[^>]*>"#).unwrap();
+    if let Some(open) = open_re.captures(xml) {
+        let start = open.get(0).unwrap().end();
+        let end = xml[start..]
+            .find("</trk>")
+            .or_else(|| xml[start..].find("</rte>"))
+            .map(|i| start + i)
+            .unwrap_or(xml.len());
+        let inner = &xml[start..end];
+        if let Some(c) = name_re.captures(inner) {
+            let v = cdata_text(&c[1]);
+            if !v.is_empty() { return v; }
+        }
+        if let Some(c) = title_re.captures(inner) {
+            let v = cdata_text(&c[1]);
+            if !v.is_empty() { return v; }
+        }
+    }
+    if let Some(c) = name_re.captures(xml) {
+        let v = cdata_text(&c[1]);
+        if !v.is_empty() { return v; }
+    }
+    if let Some(c) = title_re.captures(xml) {
+        let v = cdata_text(&c[1]);
+        if !v.is_empty() { return v; }
+    }
+    String::new()
+}
+
 pub fn parse_gpx(xml: &str) -> (String, Vec<Pt>) {
-    let name_re = Regex::new(r#"<(?:trk|rte)>\s*<name>([^<]*)</name>"#).unwrap();
-    let any_name = Regex::new(r#"<name>([^<]*)</name>"#).unwrap();
-    let name = name_re
-        .captures(xml)
-        .or_else(|| any_name.captures(xml))
-        .map(|c| c[1].to_string())
-        .unwrap_or_default();
+    let name = extract_name(xml);
     for el in ["trkpt", "rtept", "wpt"] {
         let pts = parse_points(xml, el);
         if !pts.is_empty() {
@@ -303,8 +349,25 @@ impl TzGrid {
     }
 }
 
-pub fn process(xml: &str, tz_grid: Option<&TzGrid>) -> Result<RouteData, String> {
-    let (name, pts) = parse_gpx(xml);
+pub fn process(xml: &str, tz_grid: Option<&TzGrid>, name_hint: Option<&str>) -> Result<RouteData, String> {
+    let (mut name, pts) = parse_gpx(xml);
+    // Last-resort title: the source filename (minus .gpx), then a generic label.
+    if name.trim().is_empty() {
+        if let Some(h) = name_hint {
+            let h = h.trim();
+            let h = if let Some(stripped) = h.to_lowercase().strip_suffix(".gpx") {
+                &h[..stripped.len()]
+            } else {
+                h
+            };
+            if !h.trim().is_empty() {
+                name = h.to_string();
+            }
+        }
+    }
+    if name.trim().is_empty() {
+        name = "Untitled Route".to_string();
+    }
     if pts.is_empty() {
         return Err("no track points found (<trkpt>/<rtept>/<wpt> all empty) — check the file is a GPX track export (KML/TCX/JSON renamed to .gpx will not work)".into());
     }
