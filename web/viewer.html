@@ -281,7 +281,7 @@ async function init() {
     const s = TP.stopMph, e = TP.slowMph;
     if (e <= s) return mph <= s ? [255, 82, 82] : [67, 217, 173];
     if (mph <= s) return [255, 82, 82];
-    if (mph >= e) return [67, 217, 173];
+    if (mph >= e) return [46, 214, 80];
     const mid = (s + e) / 2;
     if (mph <= mid) { const t = (mph - s) / (mid - s); return [lerp(255, 255, t), lerp(82, 210, t), lerp(82, 63, t)]; }
     const t = (mph - mid) / (e - mid); return [lerp(255, 67, t), lerp(210, 217, t), lerp(63, 173, t)];
@@ -541,7 +541,7 @@ async function init() {
   const bandRGB = new Array(PLOT_N);
   for (let k = 0; k < PLOT_N; k++) bandRGB[k] = speedRGB(speedAt(ptx[k]));
   document.getElementById('tl-legend').innerHTML =
-    'Speed <span style="display:inline-block;width:84px;height:8px;border-radius:4px;background:linear-gradient(90deg,#ff5252,#FFD23F,#43d9ad);vertical-align:middle;margin:0 7px"></span>'
+    'Speed <span style="display:inline-block;width:84px;height:8px;border-radius:4px;background:linear-gradient(90deg,#ff5252,#FFD23F,#2ed650);vertical-align:middle;margin:0 7px"></span>'
     + TP.stopMph + ' mph stopped &rarr; &ge; ' + TP.slowMph + ' mph';
   let eW = 600;
   const sizeElev = () => {
@@ -556,14 +556,12 @@ async function init() {
   const yOf = (ft) => padT + (1-(ft-minE)/(maxE-minE))*(eH-padT-padB);
   const drawElev = (at) => {
     const ctx = ectx; ctx.clearRect(0,0,eW,eH);
-    // speed band background: full-height gradient tint + solid ribbon along the bottom
+    // speed band: solid gradient strip along the bottom of the profile
     for (let k = 0; k < PLOT_N - 1; k++) {
       const x0 = xOf(ptx[k]), x1 = xOf(ptx[k+1]) + 0.5;
       const [r, g, b] = bandRGB[k];
-      ctx.fillStyle = 'rgba(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ',0.15)';
-      ctx.fillRect(x0, padT, x1 - x0, eH - padT - padB);
       ctx.fillStyle = 'rgb(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ')';
-      ctx.fillRect(x0, eH - padB - 7, x1 - x0, 7);
+      ctx.fillRect(x0, eH - padB - 9, x1 - x0, 9);
     }
     ctx.lineWidth = 1; ctx.font = '10px "Segoe UI",sans-serif';
     ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.fillStyle = 'rgba(255,255,255,0.42)';
