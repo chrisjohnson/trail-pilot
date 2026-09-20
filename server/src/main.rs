@@ -42,6 +42,9 @@ pub struct Cfg {
     /// TRAILPILOT_STOP_MPH, default 2 — a GPS-jitter floor: a parked
     /// phone still reads 1-2 mph, so 0 would never render as "stopped".
     pub stop_mph: f64,
+    /// Runner icon convoy: "subaru" (Forester -> JKU -> Tacoma), "jeep"
+    /// (JKU -> Tacoma), or "toyota" (Tacoma). TRAILPILOT_VEHICLE, default jeep.
+    pub vehicle: String,
     pub tz_grid: PathBuf,
 }
 
@@ -59,6 +62,7 @@ impl Clone for Cfg {
             debug: self.debug,
             slow_mph: self.slow_mph,
             stop_mph: self.stop_mph,
+            vehicle: self.vehicle.clone(),
             tz_grid: self.tz_grid.clone(),
         }
     }
@@ -111,6 +115,16 @@ fn parse_args() -> Cfg {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(2.0),
+        vehicle: {
+            let v = std::env::var("TRAILPILOT_VEHICLE")
+                .ok()
+                .map(|s| s.trim().to_lowercase())
+                .unwrap_or_else(|| "jeep".into());
+            if matches!(v.as_str(), "subaru" | "jeep" | "toyota") { v } else {
+                eprintln!("warning: unknown TRAILPILOT_VEHICLE ({v}); expected subaru, jeep, or toyota — using jeep");
+                "jeep".into()
+            }
+        },
     };
     if cfg.stop_mph > cfg.slow_mph {
         eprintln!("warning: TRAILPILOT_STOP_MPH ({}) > TRAILPILOT_SLOW_MPH ({}); clamping stop to slow", cfg.stop_mph, cfg.slow_mph);
@@ -293,8 +307,8 @@ async fn static_file(State(state): State<App>, uri: axum::http::Uri) -> Response
         let mut s = String::from_utf8_lossy(&body).into_owned();
         if let Some(i) = s.find("</head>") {
             let script = format!(
-                "<script>window.TP_CONFIG = {{ slowMph: {}, stopMph: {}, debug: {} }};</script>",
-                state.cfg.slow_mph, state.cfg.stop_mph, state.cfg.debug
+                "<script>window.TP_CONFIG = {{ slowMph: {}, stopMph: {}, debug: {}, vehicle: \"{}\" }};</script>",
+                state.cfg.slow_mph, state.cfg.stop_mph, state.cfg.debug, state.cfg.vehicle
             );
             s.insert_str(i, &script);
             body = s.into_bytes();

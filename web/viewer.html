@@ -255,7 +255,7 @@ async function init() {
   };
 
   // ---- Speed model (shared by the map route gradient and the scrubber band) ----
-  const TP = window.TP_CONFIG || { slowMph: 20, stopMph: 2 };
+  const TP = window.TP_CONFIG || { slowMph: 20, stopMph: 2, vehicle: 'jeep' };
   const MS2MPH = 2.2369362920544;
   const rawSpd = new Float64Array(Math.max(1, N - 1));
   for (let i = 0; i < N - 1; i++) {
@@ -360,13 +360,69 @@ async function init() {
       outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,0.55)'), outlineWidth: 1.5
     }
   });
-  const starSVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
-    "<svg xmlns='http://www.w3.org/2000/svg' width='52' height='52' viewBox='0 0 52 52'>" +
-    "<polygon points='26,3 32.5,19 49,19 35.5,29 40,46 26,36 12,46 16.5,29 3,19 19.5,19' fill='#FFD23F' stroke='#ffffff' stroke-width='2.5' stroke-linejoin='round'/></svg>");
+  // Runner icon: a top-down vehicle convoy, selected by TRAILPILOT_VEHICLE
+  // (via window.TP_CONFIG.vehicle). Subaru = teal 2001 Forester tows the JKU
+  // which tows the blue Tacoma; Jeep = red JKU (37" mud tires, roof rack, metal tube
+  // fenders) tows the Tacoma; Toyota = the blue Tacoma, being towed.
+  const VEH = (kind) => {
+    const tires = (x0, x1, y0, y1, w, h, tread) => [
+      [x0, y0], [x1, y0], [x0, y1], [x1, y1]
+    ].map(([tx, ty]) =>
+      "<rect x='" + tx + "' y='" + ty + "' width='" + w + "' height='" + h + "' rx='2' fill='#101216'/>" +
+      "<line x1='" + (tx + w/2) + "' y1='" + (ty + 2) + "' x2='" + (tx + w/2) + "' y2='" + (ty + h - 2) + "' stroke='#3a3f47' stroke-width='1.3' stroke-dasharray='" + tread + "'/>"
+    ).join('');
+    // red JKU: 37" mud-terrain tires, metal tube (clove) fenders, black hood, roof rack
+    if (kind === 'jeep')
+      return tires(0, 18, 2, 19, 6, 11, '1.6 1.4') +
+      "<rect x='3.5' y='0.5' width='17' height='31' rx='4' fill='#d0312d' stroke='#ffffff' stroke-width='1.3'/>" +
+      "<path d='M1.8 5 a5.5 5.5 0 0 1 5.5 -3.4' fill='none' stroke='#8b929c' stroke-width='2.4' stroke-linecap='round'/>" +
+      "<path d='M22.2 5 a5.5 5.5 0 0 0 -5.5 -3.4' fill='none' stroke='#8b929c' stroke-width='2.4' stroke-linecap='round'/>" +
+      "<rect x='5' y='1.5' width='14' height='8' rx='2' fill='#15181d'/>" +
+      "<rect x='5.5' y='10.5' width='13' height='3.6' rx='1' fill='#2c3e50'/>" +
+      "<rect x='4.5' y='14.8' width='15' height='13' rx='1.5' fill='#23262c' stroke='#9aa2ad' stroke-width='0.8'/>" +
+      "<line x1='5' y1='17.5' x2='19' y2='17.5' stroke='#9aa2ad' stroke-width='1'/>" +
+      "<line x1='5' y1='21' x2='19' y2='21' stroke='#9aa2ad' stroke-width='1'/>" +
+      "<line x1='5' y1='24.5' x2='19' y2='24.5' stroke='#9aa2ad' stroke-width='1'/>" +
+      "<rect x='5' y='28.6' width='14' height='2.4' rx='1' fill='#15181d'/>";
+    // blue Tacoma: open bed
+    if (kind === 'taco')
+      return tires(1, 17, 3, 20, 6, 10, '1.4 1.2') +
+      "<rect x='3.5' y='0.5' width='17' height='31' rx='4' fill='#2456d6' stroke='#ffffff' stroke-width='1.3'/>" +
+      "<rect x='5' y='1.5' width='14' height='8' rx='2' fill='#1c3f9e'/>" +
+      "<rect x='5.5' y='10.5' width='13' height='3.4' rx='1' fill='#2c3e50'/>" +
+      "<rect x='5.5' y='14.2' width='13' height='5' rx='1' fill='#3d6ae0'/>" +
+      "<rect x='5.5' y='20' width='13' height='9.6' rx='1' fill='#20242c' stroke='#122a63' stroke-width='1'/>";
+    // teal ~2001 Forester wagon with roof rails
+    return tires(1, 17, 3, 20, 6, 10, '1.4 1.2') +
+      "<rect x='3' y='0.5' width='18' height='31' rx='4.5' fill='#1f8f85' stroke='#ffffff' stroke-width='1.3'/>" +
+      "<rect x='4.5' y='1.5' width='15' height='8' rx='2' fill='#166b64'/>" +
+      "<rect x='5' y='10.5' width='14' height='3.6' rx='1' fill='#2c3e50'/>" +
+      "<rect x='5' y='14.6' width='14' height='12' rx='1' fill='#2ba396'/>" +
+      "<line x1='6.4' y1='15.2' x2='6.4' y2='26.2' stroke='#0d4f49' stroke-width='1.4'/>" +
+      "<line x1='17.6' y1='15.2' x2='17.6' y2='26.2' stroke='#0d4f49' stroke-width='1.4'/>" +
+      "<rect x='4.5' y='27.4' width='15' height='3' rx='1' fill='#0d4f49'/>";
+  };
+  const CONVOYS = { subaru: ['forester', 'jeep', 'taco'], jeep: ['jeep', 'taco'], toyota: ['taco'] };
+  const runKind = CONVOYS[String(TP.vehicle)] ? String(TP.vehicle) : 'jeep';
+  {
+    const list = CONVOYS[runKind], VW = 28, VH = 32, GAP = 8;
+    const VHt = list.length * VH + (list.length - 1) * GAP + 4;
+    let s = "<svg xmlns='http://www.w3.org/2000/svg' width='" + VW + "' height='" + VHt + "' viewBox='0 0 " + VW + " " + VHt + "'>";
+    list.forEach((kind, i) => {
+      const y = 2 + i * (VH + GAP);
+      if (i > 0) s += "<line x1='14' y1='" + (y - GAP) + "' x2='14' y2='" + y + "' stroke='#111418' stroke-width='2.5'/>"; // tow line
+      s += "<g transform='translate(2," + y + ")'>" + VEH(kind) + "</g>";
+    });
+    s += "</svg>";
+    window.__runSVG = s; // for debugging
+    const runSVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s);
+    const runW = 36, runH = Math.round(36 * VHt / VW);
+    window.__runnerBillboard = { runSVG, runW, runH };
+  }
   const runner = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
     billboard: {
-      image: starSVG, width: 42, height: 42,
+      image: window.__runnerBillboard.runSVG, width: window.__runnerBillboard.runW, height: window.__runnerBillboard.runH,
       horizontalOrigin: Cesium.HorizontalOrigin.CENTER, verticalOrigin: Cesium.VerticalOrigin.CENTER,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
       scaleByDistance: new Cesium.NearFarScalar(0, 1.15, 120000, 0.5)
