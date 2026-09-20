@@ -556,28 +556,26 @@ async function init() {
   const yOf = (ft) => padT + (1-(ft-minE)/(maxE-minE))*(eH-padT-padB);
   const drawElev = (at) => {
     const ctx = ectx; ctx.clearRect(0,0,eW,eH);
-    // speed band: solid gradient strip along the bottom of the profile
+    // full-height speed gradient background
     for (let k = 0; k < PLOT_N - 1; k++) {
       const x0 = xOf(ptx[k]), x1 = xOf(ptx[k+1]) + 0.5;
       const [r, g, b] = bandRGB[k];
       ctx.fillStyle = 'rgb(' + (r|0) + ',' + (g|0) + ',' + (b|0) + ')';
-      ctx.fillRect(x0, eH - padB - 9, x1 - x0, 9);
+      ctx.fillRect(x0, padT, x1 - x0, eH - padT - padB);
     }
     ctx.lineWidth = 1; ctx.font = '10px "Segoe UI",sans-serif';
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.fillStyle = 'rgba(255,255,255,0.42)';
+    ctx.strokeStyle = 'rgba(8,10,16,0.35)'; ctx.fillStyle = 'rgba(255,255,255,0.5)';
     for (let e=Math.ceil(minE/200)*200; e<=maxE; e+=200){ const y=yOf(e); ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(eW-padR,y); ctx.stroke(); ctx.fillText(e, 3, y+3); }
     for (let t=0; t<=total; t+=7200){ const x=xOf(t); ctx.beginPath(); ctx.moveTo(x,padT); ctx.lineTo(x,eH-padB); ctx.stroke(); ctx.fillText((t/3600)+'h', x-8, eH-5); }
-    ctx.beginPath(); ctx.moveTo(xOf(ptx[0]), yOf(pty[0]));
-    for (let k=1;k<PLOT_N;k++) ctx.lineTo(xOf(ptx[k]), yOf(pty[k]));
-    ctx.lineTo(xOf(ptx[PLOT_N-1]), eH-padB); ctx.lineTo(xOf(ptx[0]), eH-padB); ctx.closePath();
-    ctx.fillStyle = 'rgba(120,255,80,0.13)'; ctx.fill();
-    ctx.beginPath(); ctx.moveTo(xOf(ptx[0]), yOf(pty[0]));
-    for (let k=1;k<PLOT_N;k++) ctx.lineTo(xOf(ptx[k]), yOf(pty[k]));
-    ctx.strokeStyle = '#7CFC00'; ctx.lineWidth = 1.5; ctx.stroke();
+    // Elevation profile: white line with a dark halo so it reads over any gradient color
+    const tracePath = () => { ctx.beginPath(); ctx.moveTo(xOf(ptx[0]), yOf(pty[0])); for (let k=1;k<PLOT_N;k++) ctx.lineTo(xOf(ptx[k]), yOf(pty[k])); };
+    tracePath(); ctx.strokeStyle = 'rgba(8,10,16,0.85)'; ctx.lineWidth = 4; ctx.stroke();
+    tracePath(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.8; ctx.stroke();
     const mx = xOf(at);
     ctx.strokeStyle = 'rgba(90,216,255,0.9)'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.moveTo(mx,padT); ctx.lineTo(mx,eH-padB); ctx.stroke();
     ctx.fillStyle = '#4dd8ff'; ctx.beginPath(); ctx.arc(mx, yOf(elevAtTime(at)), 3.5, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = 'rgba(8,10,16,0.9)'; ctx.lineWidth = 1.5; ctx.stroke();
   };
   sizeElev();
   window.addEventListener('resize', () => { sizeElev(); drawElev(elapsed); });
