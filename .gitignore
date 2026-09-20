@@ -15,3 +15,5 @@ server/target/
 data/
 cache/
 .toolchain/
+# user GPX data dropped into the workspace — do not publish
+squirrel camp 2026.gpx
