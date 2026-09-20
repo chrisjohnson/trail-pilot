@@ -103,6 +103,7 @@ tiles (~135 MB; per-zoom split 16/25/47/102/241/817/2382/7683 for z10..z17).
 trailpilot --port 8137 [--data data] [--cache cache] [--web web]
            [--ingest file.gpx]... [--offline]
            [--tile-origin https://tile.opentopomap.org]
+`TRAILPILOT_DEBUG=1 ./run.sh …` arms the click diagnostics in the viewer (off by default).
            [--cdn-allow unpkg.com] [--tz-grid build/tz-grid.json]
 ```
 

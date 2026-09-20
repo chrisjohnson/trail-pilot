@@ -392,7 +392,7 @@ async function init() {
       if (ent && ent._marker) { found = ent._marker; break; }
     }
     if (found) { select(found); flashStatus('✓ ' + found.label); }
-    else flashStatus('click @ ' + Math.round(pixel.x) + ',' + Math.round(pixel.y) + ' — ' + picks.length + ' object(s) under cursor, no waypoint');
+    else if (window.TP_DEBUG) flashStatus('click @ ' + Math.round(pixel.x) + ',' + Math.round(pixel.y) + ' — ' + picks.length + ' object(s) under cursor, no waypoint');
   };
   // Native DOM click on the canvas: the Cesium ScreenSpaceEventHandler's
   // LEFT_DOWN/LEFT_UP never fired here, so use mousedown+mouseup (<10px = click).

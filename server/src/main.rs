@@ -34,6 +34,8 @@ pub struct Cfg {
     pub ingest: Option<PathBuf>,
     pub tile_origin: String,
     pub cdn_allow: Vec<String>,
+    /// TRAILPILOT_DEBUG=1 — expose the click diagnostics in the viewer.
+    pub debug: bool,
     pub tz_grid: PathBuf,
 }
 
@@ -48,6 +50,7 @@ impl Clone for Cfg {
             ingest: self.ingest.clone(),
             tile_origin: self.tile_origin.clone(),
             cdn_allow: self.cdn_allow.clone(),
+            debug: self.debug,
             tz_grid: self.tz_grid.clone(),
         }
     }
@@ -88,6 +91,10 @@ fn parse_args() -> Cfg {
         tile_origin: "https://tile.opentopomap.org".into(),
         cdn_allow: vec!["unpkg.com".into()],
         tz_grid: PathBuf::from("build/tz-grid.json"),
+        debug: std::env::var("TRAILPILOT_DEBUG")
+            .ok()
+            .map(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false),
     };
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     while let Some(a) = args.first() {
@@ -256,10 +263,18 @@ async fn static_file(State(state): State<App>, uri: axum::http::Uri) -> Response
     if !p.is_file() {
         return err_response(StatusCode::NOT_FOUND, "not found");
     }
-    let body = match tokio::fs::read(&p).await {
+    let mut body = match tokio::fs::read(&p).await {
         Ok(b) => b,
         Err(_) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, "read error"),
     };
+    // With TRAILPILOT_DEBUG=1, arm the viewer's click diagnostics.
+    if state.cfg.debug && rel == "viewer.html" {
+        let mut s = String::from_utf8_lossy(&body).into_owned();
+        if let Some(i) = s.find("</head>") {
+            s.insert_str(i, "<script>window.TP_DEBUG = true;</script>");
+            body = s.into_bytes();
+        }
+    }
     ([(axum::http::header::CONTENT_TYPE, content_type(&p).to_string())], body).into_response()
 }
 
