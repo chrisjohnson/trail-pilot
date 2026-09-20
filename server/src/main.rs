@@ -252,7 +252,8 @@ async fn load_registry(state: &App) {
 async fn static_file(State(state): State<App>, uri: axum::http::Uri) -> Response {
     let raw = uri.path();
     let rel = raw.trim_start_matches('/');
-    let rel = if rel.is_empty() { "index.html" } else { rel };
+    // / = routes index; /viewer = the 3D viewer (also /viewer.html)
+    let rel = if rel.is_empty() { "routes.html" } else if rel == "viewer" { "viewer.html" } else { rel };
     let p = state.web_root.join(rel);
     let p = match p.canonicalize() {
         Ok(p) => p,
@@ -313,6 +314,8 @@ async fn routes_list(State(state): State<App>) -> Response {
                 "totalDistanceMiles": e.data["totalDistanceMiles"],
                 "totalDurationStr": e.data["totalDurationStr"],
                 "startUTC": e.data["startUTC"],
+                "points": e.data["route"].as_array().map(|a| a.len()).unwrap_or(0),
+                "breaks": e.data["breaks"].as_array().map(|a| a.len()).unwrap_or(0),
                 "current": Some(&e.slug) == reg.current.as_ref(),
             })
         })

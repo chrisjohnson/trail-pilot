@@ -18,6 +18,8 @@
   .glass { background:var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border:1px solid rgba(255,255,255,0.09); border-radius:14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45); }
   #banner { position:absolute; top:16px; left:16px; right:16px; padding:16px 18px; z-index:10; display:flex; flex-wrap:wrap; gap:14px 22px; align-items:center; }
   #banner h1 { font-size:18px; margin:0; letter-spacing:0.3px; font-weight:600; }
+  #routes-link { color:var(--muted); text-decoration:none; font-size:13px; font-weight:600; padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.09); white-space:nowrap; }
+  #routes-link:hover { color:var(--ink); background:rgba(255,255,255,0.06); }
   #banner .sub { color:var(--muted); font-size:12px; margin-top:2px; }
   .stats { display:flex; gap:18px; margin-left:auto; flex-wrap:wrap; }
   .stat { text-align:right; }
@@ -99,6 +101,7 @@
 <div id="cesiumContainer"></div>
 
 <div id="banner" class="glass">
+  <a id="routes-link" href="/" title="All routes">← routes</a>
   <div>
     <h1 id="title">Friday Morning Hard Trail Run</h1>
     <div class="sub" id="subtime"></div>

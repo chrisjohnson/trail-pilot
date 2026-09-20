@@ -27,7 +27,8 @@ Ingest as many GPX files as you like — each is added to the route list and
 the **tile cache is shared across all of them** (keyed by upstream URL, not
 by route): a second route over overlapping ground reuses every cached tile
 and only downloads the new ones. View a specific route by name:
-`http://<host>:8137/?route=short-overlap-run` (slug or display name).
+`http://<host>:8137/viewer?route=short-overlap-run` (slug or
+display name).
 
 ## How it works
 
@@ -85,7 +86,7 @@ tiles (~135 MB; per-zoom split 16/25/47/102/241/817/2382/7683 for z10..z17).
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | the web viewer (static) |
-| `GET /route_data.json` | current route data, or `?route=<slug-or-name>` for a named one |
+| `GET /route_data.json` | current route data, or `?route=<slug-or-name>` for a named one (what the viewer fetches) |
 | `POST /routes/ingest` | ingest a GPX (raw body) → added to routes, becomes current |
 | `GET /routes` | list ingested routes |
 | `GET /routes/{slug}/data.json` | one route's data |

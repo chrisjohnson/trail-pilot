@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>trail-pilot</title>
+<style>
+  :root {
+    --panel: rgba(14,20,38,0.82); --line: #FF6B3B; --break: #FFB347; --third: #FFD23F;
+    --ink: #eef2f8; --muted: #9aa7bd; --accent: #43d9ad;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; min-height:100%; font-family:"Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif; color:var(--ink);
+    background: radial-gradient(1200px 700px at 20% -10%, #16233f 0%, #0a0f1e 55%, #060912 100%); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 42px 20px 60px; }
+  header { display:flex; align-items:baseline; gap:14px; margin-bottom: 6px; }
+  header h1 { font-size: 26px; margin: 0; font-weight: 650; letter-spacing: 0.4px; }
+  header h1 .dot { color: var(--line); }
+  #count { color: var(--muted); font-size: 14px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 26px; }
+  .card { display: block; text-decoration: none; color: var(--ink); background: var(--panel); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+    padding: 16px 18px; margin-bottom: 12px; transition: border-color .12s ease, transform .12s ease; }
+  .card:hover { border-color: var(--line); transform: translateY(-1px); }
+  .row1 { display:flex; align-items:center; gap:10px; }
+  .row1 .name { font-size: 17px; font-weight: 600; letter-spacing: 0.3px; }
+  .badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); border: 1px solid rgba(67,217,173,0.5); border-radius: 99px; padding: 2px 9px; }
+  .row2 { color: var(--muted); font-size: 13px; margin-top: 5px; }
+  .row3 { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px; }
+  .row3 span b { color: var(--ink); font-weight: 600; }
+  .row3 span i { font-style: normal; color: var(--muted); margin-left: 4px; }
+  .go { float: right; color: var(--line); font-weight: 600; font-size: 14px; }
+  .empty { color: var(--muted); font-size: 14px; line-height: 1.7; background: var(--panel); border: 1px dashed rgba(255,255,255,0.15); border-radius: 14px; padding: 26px; }
+  .empty code { color: var(--ink); background: rgba(255,255,255,0.07); border-radius: 6px; padding: 2px 6px; font-size: 12.5px; }
+  #list:empty { display: none; }
+  @media (max-width: 560px) { .wrap { padding-top: 26px; } .row3 { gap: 5px 14px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>trail-pilot<span class="dot">.</span></h1>
+    <span id="count"></span>
+  </header>
+  <p class="hint">Ingested routes. Pick one to open it in the 3D viewer.</p>
+  <div id="list"><div class="empty">Loading…</div></div>
+</div>
+<script>
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtDate(iso, tz) {
+  try {
+    const d = new Date(String(iso).replace(' ', 'T').replace(' UTC', 'Z'));
+    if (isNaN(d)) return iso;
+    return d.toLocaleDateString('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+      + ' at ' + d.toLocaleTimeString('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true });
+  } catch (e) { return iso; }
+}
+async function init() {
+  const list = document.getElementById('list');
+  let j;
+  try { j = await (await fetch('/routes', { cache: 'no-store' })).json(); }
+  catch (e) { list.innerHTML = '<div class="empty">Failed to load route list: ' + esc(e.message) + '</div>'; return; }
+  const routes = j.routes || [];
+  document.getElementById('count').textContent = routes.length + (routes.length === 1 ? ' route' : ' routes');
+  if (!routes.length) {
+    list.innerHTML = '<div class="empty">No routes yet. Ingest a GPX with:<br><br>'
+      + '<code>curl -X POST --data-binary @your-run.gpx http://localhost:PORT/routes/ingest</code><br><br>'
+      + 'or pass it to <code>./run.sh</code> at startup.</div>';
+    return;
+  }
+  list.innerHTML = routes.map(rt =>
+    '<a class="card" href="/viewer?route=' + encodeURIComponent(rt.slug) + '">'
+    + '<span class="go">view →</span>'
+    + '<div class="row1"><span class="name">' + esc(rt.name) + '</span>' + (rt.current ? '<span class="badge">current</span>' : '') + '</div>'
+    + (rt.startUTC ? '<div class="row2">' + esc(fmtDate(rt.startUTC, rt.timezone || 'UTC')) + '</div>' : '')
+    + '<div class="row3">'
+    + '<span><b>' + rt.totalDistanceMiles + '</b><i>mi</i></span>'
+    + '<span><b>' + esc(rt.totalDurationStr) + '</b><i>moving</i></span>'
+    + '<span><b>' + (rt.breaks ?? 0) + '</b><i>breaks</i></span>'
+    + '<span><b>' + (rt.points ?? 0).toLocaleString() + '</b><i>points</i></span>'
+    + '</div></a>'
+  ).join('');
+}
+init();
+</script>
+</body>
+</html>
