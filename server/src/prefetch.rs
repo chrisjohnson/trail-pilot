@@ -17,7 +17,12 @@ pub struct Job {
     pub total: usize,
     pub by_zoom: Vec<(u32, usize)>,
     pub done: AtomicUsize,
+    /// Cumulative count of failed fetch ATTEMPTS (a tile retried on 3 passes
+    /// counts 3 times). Not the number of tiles still failing.
     pub failed: AtomicUsize,
+    /// Tiles we gave up on: upstream 404 (no coverage — e.g. open water at a
+    /// route edge) or still failing after the retry-pass cap. Monotonic.
+    pub skipped: AtomicUsize,
     pub finished: AtomicBool,
 }
 
@@ -34,6 +39,7 @@ impl Job {
             by_zoom,
             done: AtomicUsize::new(0),
             failed: AtomicUsize::new(0),
+            skipped: AtomicUsize::new(0),
             finished: AtomicBool::new(false),
         })
     }
@@ -41,6 +47,7 @@ impl Job {
     pub fn status(&self) -> Value {
         let done = self.done.load(Ordering::SeqCst);
         let failed = self.failed.load(Ordering::SeqCst);
+        let skipped = self.skipped.load(Ordering::SeqCst);
         let pct = if self.total == 0 {
             100
         } else {
@@ -57,6 +64,7 @@ impl Job {
             },
             "done": done,
             "failed": failed,
+            "skipped": skipped,
             "pct": pct,
         })
     }
@@ -97,8 +105,10 @@ pub fn tile_urls(points: &[Pt], origin: &str, zmin: u32, zmax: u32, margin_km: f
 }
 
 /// One pass: fetch every URL through the cache with bounded concurrency.
-/// Returns the URLs that still failed.
-async fn pass(job: &Arc<Job>, urls: &[String], cache: &Arc<Cache>) -> Vec<String> {
+/// Returns (retry, permanent): failures that look transient (5xx, reset,
+/// timeout) vs. failures that will never succeed (upstream 404 — the tile
+/// has no coverage, e.g. open water at a route edge).
+async fn pass(job: &Arc<Job>, urls: &[String], cache: &Arc<Cache>) -> (Vec<String>, Vec<String>) {
     let sem = Arc::new(tokio::sync::Semaphore::new(CONCURRENCY));
     let mut set = tokio::task::JoinSet::new();
     for url in urls {
@@ -108,31 +118,57 @@ async fn pass(job: &Arc<Job>, urls: &[String], cache: &Arc<Cache>) -> Vec<String
         let url = url.clone();
         set.spawn(async move {
             let _permit = sem.acquire().await;
-            let r = cache.get_or_fetch(&url).await;
-            if r.is_err() {
-                job.failed.fetch_add(1, Ordering::SeqCst);
-                Some(url)
-            } else {
-                None
+            match cache.get_or_fetch(&url).await {
+                Ok(_) => {
+                    job.done.fetch_add(1, Ordering::SeqCst);
+                    None
+                }
+                Err(e) => {
+                    job.failed.fetch_add(1, Ordering::SeqCst);
+                    Some((url, is_permanent(&e)))
+                }
             }
         });
     }
-    let mut failed = Vec::new();
+    let mut retry = Vec::new();
+    let mut permanent = Vec::new();
     while let Some(res) = set.join_next().await {
-        if let Ok(Some(u)) = res {
-            failed.push(u);
+        if let Ok(Some((u, perm))) = res {
+            if perm { permanent.push(u) } else { retry.push(u) }
         }
     }
-    failed
+    (retry, permanent)
 }
 
+/// The cache layer already distinguishes these: a 404 is returned
+/// immediately (no internal retries) with this exact wording, while 5xx,
+/// resets, and timeouts get 3 backoff attempts before failing.
+fn is_permanent(err: &str) -> bool {
+    err.contains("upstream returned 404")
+}
+
+/// Retry passes after the first. The cache layer already gives each URL 3
+/// backoff attempts per pass, so a URL still failing after the cap is
+/// treated as permanently bad: it is reported as skipped and the job ends.
+/// The job ALWAYS terminates, even if every URL is a permanent failure.
+const MAX_RETRY_PASSES: usize = 3;
+
 /// Run the job: fetch every URL through the cache with bounded concurrency,
-/// then give any failures one sequential retry pass (rate-limit recovery).
+/// then retry transient failures (rate-limit recovery), capping the number
+/// of passes so a permanently-bad URL cannot pin the job forever.
 pub async fn run(job: Arc<Job>, urls: Vec<String>, cache: Arc<Cache>) {
-    let mut failed = pass(&job, &urls, &cache).await;
-    while !failed.is_empty() {
+    let (mut retry, mut permanent) = pass(&job, &urls, &cache).await;
+    job.skipped.fetch_add(permanent.len(), Ordering::SeqCst);
+    let mut pass_no = 0;
+    while !retry.is_empty() && pass_no < MAX_RETRY_PASSES {
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        failed = pass(&job, &failed, &cache).await;
+        pass_no += 1;
+        let (r, p) = pass(&job, &retry, &cache).await;
+        job.skipped.fetch_add(p.len(), Ordering::SeqCst);
+        retry = r;
+        permanent.clear();
     }
+    // Give up on whatever still fails — the job must finish.
+    job.skipped.fetch_add(retry.len(), Ordering::SeqCst);
     job.finished.store(true, Ordering::SeqCst);
 }

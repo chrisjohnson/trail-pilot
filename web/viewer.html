@@ -210,10 +210,11 @@ async function init() {
       if (!r.ok) throw new Error(j.message || 'HTTP ' + r.status);
       const tick = async () => {
         const s2 = await (await fetch('/prefetch/' + j.job)).json();
-        pfStatus.textContent = s2.done + '/' + s2.total + ' tiles (' + s2.pct + '%' + (s2.failed ? ', ' + s2.failed + ' failed' : '') + ')';
+        const bits = s2.done + '/' + s2.total + ' tiles (' + s2.pct + '%' + (s2.skipped ? ', ' + s2.skipped + ' skipped (no upstream coverage)' : '') + (s2.failed && s2.state !== 'done' ? ', ' + s2.failed + ' retrying' : '') + ')';
+        pfStatus.textContent = bits;
         if (s2.state === 'done') {
           pfStop(); pfBtn.disabled = false;
-          pfStatus.textContent = 'done — ' + s2.done + '/' + s2.total + (s2.failed ? ', ' + s2.failed + ' failed' : '') + ' — ready offline';
+          pfStatus.textContent = 'done — ' + s2.done + '/' + s2.total + (s2.skipped ? ', ' + s2.skipped + ' skipped (no upstream coverage)' : '') + ' — ready offline';
         }
       };
       await tick();
