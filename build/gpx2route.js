@@ -43,16 +43,32 @@ function hav(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
-function parseGpx(xml) {
-  const name = (xml.match(/<trk>\s*<name>([^<]*)<\/name>/) || xml.match(/<name>([^<]*)<\/name>/) || [])[1] || 'Route';
+// Permissive: lat/lon in either order, extra attributes allowed, self-closing
+// tags allowed. Tries <trkpt> then <rtept> then <wpt> (planned-route and
+// waypoint-only exports, e.g. Apple Health).
+function parsePoints(xml, el) {
+  const re = new RegExp('<' + el + '\\b([^>]*?)(?:>([\\s\\S]*?)</' + el + '>|/>)', 'g');
+  const latRe = /lat="(-?[\d.]+)"/, lonRe = /lon="(-?[\d.]+)"/;
   const pts = [];
-  const re = /<trkpt\s+lat="(-?[\d.]+)"\s+lon="(-?[\d.]+)">(?:\s*<ele>([\d.]+)<\/ele>)?(?:\s*<time>([^<]*)<\/time>)?<\/trkpt>/g;
   let m;
   while ((m = re.exec(xml))) {
-    pts.push({ lon: parseFloat(m[2]), lat: parseFloat(m[1]), ele: m[3] !== undefined ? parseFloat(m[3]) : 0, t: m[4] ? Date.parse(m[4]) : NaN });
+    const attrs = m[1].replace(/\/$/, '');
+    const la = attrs.match(latRe), lo = attrs.match(lonRe);
+    if (!la || !lo) continue;
+    const body = m[2] || '';
+    const eleM = body.match(/<ele>([\d.]+)<\/ele>/);
+    const timeM = body.match(/<time>([^<]*)<\/time>/);
+    pts.push({ lon: parseFloat(lo[1]), lat: parseFloat(la[1]), ele: eleM ? parseFloat(eleM[1]) : 0, t: timeM ? Date.parse(timeM[1]) : NaN });
   }
-  if (!pts.length) throw new Error('No <trkpt> elements found in GPX');
-  return { name, pts };
+  return pts;
+}
+function parseGpx(xml) {
+  const name = (xml.match(/<(?:trk|rte)>\s*<name>([^<]*)<\/name>/) || xml.match(/<name>([^<]*)<\/name>/) || [])[1] || 'Route';
+  for (const el of ['trkpt', 'rtept', 'wpt']) {
+    const pts = parsePoints(xml, el);
+    if (pts.length) return { name, pts };
+  }
+  throw new Error('No track points found (<trkpt>/<rtept>/<wpt> all empty) — check the file is a GPX track export (KML/TCX/JSON renamed to .gpx will not work)');
 }
 
 function detectBreaks(pts) {
@@ -84,7 +100,7 @@ function detectBreaks(pts) {
 
 function fmtDur(s) { s = Math.round(s); const h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
   if (h > 0) return h + 'h ' + m + 'm'; if (m > 0) return m + 'm'; return s + 's'; }
-function utcStr(ms) { return new Date(ms).toISOString().replace('T',' ').replace('.000Z',' UTC'); }
+function utcStr(ms) { return Number.isNaN(ms) ? 'NaN' : new Date(ms).toISOString().replace('T',' ').replace('.000Z',' UTC'); }
 
 function main() {
   const args = process.argv.slice(2);

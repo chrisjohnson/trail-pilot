@@ -17,8 +17,14 @@ GPXS=("$@")
 [ -f .toolchain/cargo/env ] && . ./.toolchain/cargo/env
 
 BIN=server/target/release/trailpilot
-if [ ! -x "$BIN" ] || [ server/Cargo.toml -nt "$BIN" ]; then
-  echo "building trailpilot (first run)…"
+NEED_BUILD=0
+[ -x "$BIN" ] || NEED_BUILD=1
+# rebuild if any source (or manifest) is newer than the binary
+if [ "$NEED_BUILD" -eq 0 ] && [ -n "$(find server/src server/Cargo.toml -newer "$BIN" -print -quit 2>/dev/null)" ]; then
+  NEED_BUILD=1
+fi
+if [ "$NEED_BUILD" -eq 1 ]; then
+  echo "building trailpilot…"
   cargo build --release --manifest-path server/Cargo.toml
 fi
 

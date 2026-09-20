@@ -140,31 +140,48 @@ fn utc_str(ms: f64) -> String {
     )
 }
 
+/// Permissive point parser: lat/lon in either attribute order, any other
+/// attributes allowed, self-closing tags allowed. Tries <el> variants in
+/// parse_gpx (trkpt -> rtept -> wpt) to cover track / planned-route /
+/// waypoint-only exports (e.g. Apple Health).
+fn parse_points(xml: &str, el: &str) -> Vec<Pt> {
+    let re = Regex::new(&format!(r#"(?s)<{el}\b([^>]*?)(?:>(.*?)</{el}>|/>)"#)).unwrap();
+    let lat_re = Regex::new(r#"lat="(-?[\d.]+)""#).unwrap();
+    let lon_re = Regex::new(r#"lon="(-?[\d.]+)""#).unwrap();
+    let ele_re = Regex::new(r#"<ele>([\d.]+)</ele>"#).unwrap();
+    let time_re = Regex::new(r#"<time>([^<]*)</time>"#).unwrap();
+    let mut pts = Vec::new();
+    for m in re.captures_iter(xml) {
+        let attrs = m[1].trim_end_matches('/');
+        let (Some(la), Some(lo)) = (lat_re.captures(attrs), lon_re.captures(attrs)) else {
+            continue;
+        };
+        let body = m.get(2).map(|b| b.as_str()).unwrap_or("");
+        pts.push(Pt {
+            lat: la[1].parse().unwrap_or(0.0),
+            lon: lo[1].parse().unwrap_or(0.0),
+            ele: ele_re.captures(body).map(|c| c[1].parse().unwrap_or(0.0)).unwrap_or(0.0),
+            t: time_re.captures(body).map(|c| parse_time_utc_ms(&c[1])).unwrap_or(f64::NAN),
+        });
+    }
+    pts
+}
+
 pub fn parse_gpx(xml: &str) -> (String, Vec<Pt>) {
-    let name_re = Regex::new(r#"<trk>\s*<name>([^<]*)</name>"#).unwrap();
+    let name_re = Regex::new(r#"<(?:trk|rte)>\s*<name>([^<]*)</name>"#).unwrap();
     let any_name = Regex::new(r#"<name>([^<]*)</name>"#).unwrap();
     let name = name_re
         .captures(xml)
         .or_else(|| any_name.captures(xml))
         .map(|c| c[1].to_string())
         .unwrap_or_default();
-    let trkpt = Regex::new(
-        r#"<trkpt\s+lat="(-?[\d.]+)"\s+lon="(-?[\d.]+)">(?:\s*<ele>([\d.]+)</ele>)?(?:\s*<time>([^<]*)</time>)?</trkpt>"#,
-    )
-    .unwrap();
-    let mut pts = Vec::new();
-    for c in trkpt.captures_iter(xml) {
-        pts.push(Pt {
-            lat: c[1].parse().unwrap_or(0.0),
-            lon: c[2].parse().unwrap_or(0.0),
-            ele: c.get(3).map(|m| m.as_str().parse().unwrap_or(0.0)).unwrap_or(0.0),
-            t: c
-                .get(4)
-                .map(|m| parse_time_utc_ms(m.as_str()))
-                .unwrap_or(f64::NAN),
-        });
+    for el in ["trkpt", "rtept", "wpt"] {
+        let pts = parse_points(xml, el);
+        if !pts.is_empty() {
+            return (name, pts);
+        }
     }
-    (name, pts)
+    (name, Vec::new())
 }
 
 struct Brk {
@@ -289,7 +306,7 @@ impl TzGrid {
 pub fn process(xml: &str, tz_grid: Option<&TzGrid>) -> Result<RouteData, String> {
     let (name, pts) = parse_gpx(xml);
     if pts.is_empty() {
-        return Err("no <trkpt> points found in GPX".into());
+        return Err("no track points found (<trkpt>/<rtept>/<wpt> all empty) — check the file is a GPX track export (KML/TCX/JSON renamed to .gpx will not work)".into());
     }
     let t0 = pts[0].t;
     let (brks, total_m, p_d) = detect_breaks(&pts);
