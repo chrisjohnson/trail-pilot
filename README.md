@@ -18,9 +18,16 @@ That builds the server (first run only), ingests the GPX, and serves:
 - http://<LAN IP>:8137/ — the viewer (phone, same Wi-Fi)
 
 Open the page, then hit **Pre-fetch offline** in the banner: it walks the
-route corridor (±1 km, zooms 10–15) through the server's pull-through cache
-and durably stores every tile as files. After that, the whole page —
-imagery, Cesium bundle, route data — works with no internet at all.
+route corridor (±1 km, every zoom level 10–17) through the server's
+pull-through cache and durably stores every tile as files. After that, the
+whole page — imagery, Cesium bundle, route data — works with no internet at
+all.
+
+Ingest as many GPX files as you like — each is added to the route list and
+the **tile cache is shared across all of them** (keyed by upstream URL, not
+by route): a second route over overlapping ground reuses every cached tile
+and only downloads the new ones. View a specific route by name:
+`http://<host>:8137/?route=short-overlap-run` (slug or display name).
 
 ## How it works
 
@@ -78,8 +85,8 @@ tiles (~135 MB; per-zoom split 16/25/47/102/241/817/2382/7683 for z10..z17).
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /` | the web viewer (static) |
-| `GET /route_data.json` | current route data |
-| `POST /routes/ingest` | ingest a GPX (raw body) → becomes current route |
+| `GET /route_data.json` | current route data, or `?route=<slug-or-name>` for a named one |
+| `POST /routes/ingest` | ingest a GPX (raw body) → added to routes, becomes current |
 | `GET /routes` | list ingested routes |
 | `GET /routes/{slug}/data.json` | one route's data |
 | `GET /tiles/otm/{z}/{x}/{y}.png` | OpenTopoMap tile via pull-through cache |
@@ -148,6 +155,35 @@ targets, and the binary has zero runtime dependencies. The plan:
 Go was the main alternative but can't target iOS; Node/Python/Kotlin have no
 native-mobile server story. Rust is the only one that covers all three with
 one codebase.
+
+## Performance (mobile readiness)
+
+The code paths that would hurt on a phone CPU are already off the async
+worker pool:
+
+- **Cache reads/writes use `tokio::fs`** — a burst of tile hits during a
+  pan/zoom never blocks a worker thread (each entry is a small file, served
+  from the OS page cache).
+- **Prefetch tile math runs in `spawn_blocking`** (6,775 points × 8 zooms
+  is ~10⁶ set inserts) — it won't stall request handling on a weak CPU.
+- **`/healthz` cache-stats walk runs in `spawn_blocking`** (can be 100k+
+  files).
+
+Known properties worth knowing on a phone:
+
+- **Jobs are in-memory** — if the process dies mid-prefetch, re-issue the
+  same `POST /prefetch`: cached tiles are instant file hits, so it acts as a
+  resume. (Durable job state is a natural next step.)
+- **In-flight dedupe** means N viewers watching the same uncached tile
+  cause exactly 1 upstream fetch.
+- **Prefetch concurrency is 12** — polite to tile providers over cellular;
+  when signal drops, in-flight requests fail and the retry passes pick them
+  back up.
+- **Route data is held in memory** (≈2 MB per 6,775-point route as a JSON
+  value). Fine for many routes; dense 10 Hz tracks (100k+ points) would
+  eventually want the point buffer stored separately.
+- Cache growth is unbounded by design (that's the point) — `rm -rf cache/`
+  is the reset.
 
 ## Development
 

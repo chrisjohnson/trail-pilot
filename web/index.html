@@ -160,7 +160,8 @@ async function init() {
     }
   let D;
   try {
-    const r = await fetch('route_data.json', {cache:'no-store'});
+    const routeParam = new URLSearchParams(location.search).get('route');
+    const r = await fetch('route_data.json' + (routeParam ? '?route=' + encodeURIComponent(routeParam) : ''), {cache:'no-store'});
     D = await r.json();
   } catch (e) {
     document.getElementById('status').textContent = 'Failed to load route_data.json'; throw e;

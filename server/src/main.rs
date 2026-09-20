@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -272,11 +272,31 @@ async fn static_file(State(state): State<App>, uri: axum::http::Uri) -> Response
     ([(axum::http::header::CONTENT_TYPE, content_type(&p).to_string())], body).into_response()
 }
 
-async fn route_data_current(State(state): State<App>) -> Response {
+#[derive(Deserialize)]
+struct RouteQuery {
+    route: Option<String>,
+}
+
+/// Current route data, or a named one: ?route=<slug> (or the display name).
+async fn route_data_current(State(state): State<App>, Query(q): Query<RouteQuery>) -> Response {
     let reg = state.routes.lock().await;
-    match reg.current.as_ref().and_then(|s| reg.entries.get(s)) {
+    let entry = match &q.route {
+        Some(want) if !want.is_empty() => {
+            let wl = want.to_lowercase();
+            reg.entries.values().find(|e| {
+                e.slug == *want
+                    || e.data["name"].as_str().map(|n| n.to_lowercase() == wl).unwrap_or(false)
+            })
+            .cloned()
+        }
+        _ => reg.current.as_ref().and_then(|s| reg.entries.get(s)).cloned(),
+    };
+    match entry {
         Some(e) => Json(e.data.clone()).into_response(),
-        None => err_response(StatusCode::NOT_FOUND, "no route ingested yet — POST /routes/ingest"),
+        None => err_response(
+            StatusCode::NOT_FOUND,
+            &q.route.map(|w| format!("no such route: {w}")).unwrap_or_else(|| "no route ingested yet — POST /routes/ingest".into()),
+        ),
     }
 }
 
@@ -395,7 +415,18 @@ async fn prefetch_start(State(state): State<App>, Json(req): Json<PrefetchReq>) 
         return err_response(StatusCode::BAD_REQUEST, "zmin > zmax");
     }
     let margin_km = req.margin_km.unwrap_or(1.0);
-    let urls = prefetch::tile_urls(&entry.points, &state.cfg.tile_origin, zmin, zmax, margin_km);
+    // CPU-bound tile math (tens of thousands of points x zooms) off the worker pool —
+    // matters when this runs on a phone CPU.
+    let points = entry.points.clone();
+    let origin = state.cfg.tile_origin.clone();
+    let urls = match tokio::task::spawn_blocking(move || {
+        prefetch::tile_urls(&points, &origin, zmin, zmax, margin_km)
+    })
+    .await
+    {
+        Ok(urls) => urls,
+        Err(_) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, "tile computation aborted"),
+    };
     let total = urls.len();
     let mut by_zoom: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
     for u in &urls {
@@ -428,7 +459,11 @@ async fn prefetch_list(State(state): State<App>) -> Response {
 }
 
 async fn healthz(State(state): State<App>) -> Response {
-    let (files, bytes) = state.cache.stats();
+    // full directory walk — off the worker pool (can be 100k+ files)
+    let cache = state.cache.clone();
+    let (files, bytes) = tokio::task::spawn_blocking(move || cache.stats())
+        .await
+        .unwrap_or((0, 0));
     let reg = state.routes.lock().await;
     Json(json!({
         "ok": true,

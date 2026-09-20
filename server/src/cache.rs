@@ -103,11 +103,11 @@ impl Cache {
         let (bin, meta) = self.paths(url);
         // 1) cache hit?
         if meta.is_file() && bin.is_file() {
-            if let Ok(m) = std::fs::read_to_string(&meta) {
+            if let Ok(m) = tokio::fs::read_to_string(&meta).await {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&m) {
                     let stored_at = v["stored_at"].as_i64().unwrap_or(0);
                     if now_secs() - stored_at < TTL_SECS {
-                        if let Ok(body) = std::fs::read(&bin) {
+                        if let Ok(body) = tokio::fs::read(&bin).await {
                             return Ok(CacheResponse {
                                 body,
                                 content_type: v["content_type"].as_str().unwrap_or("application/octet-stream").to_string(),
@@ -188,18 +188,18 @@ impl Cache {
             .to_string();
         let body = resp.bytes().await.map_err(|e| format!("reading upstream body: {e}"))?;
         let body = body.to_vec();
-        // durable store: tmp + rename
+        // durable store: tmp + rename (non-blocking)
         if let Some(parent) = bin.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
         }
         let tmp = bin.with_extension("bin.tmp");
-        std::fs::write(&tmp, &body).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, bin).map_err(|e| e.to_string())?;
+        tokio::fs::write(&tmp, &body).await.map_err(|e| e.to_string())?;
+        tokio::fs::rename(&tmp, bin).await.map_err(|e| e.to_string())?;
         let stored_at = now_secs();
         let mv = serde_json::json!({ "url": url, "content_type": content_type, "stored_at": stored_at, "bytes": body.len() });
         let mtmp = meta.with_extension("meta.json.tmp");
-        std::fs::write(&mtmp, mv.to_string()).map_err(|e| e.to_string())?;
-        std::fs::rename(&mtmp, meta).map_err(|e| e.to_string())?;
+        tokio::fs::write(&mtmp, mv.to_string()).await.map_err(|e| e.to_string())?;
+        tokio::fs::rename(&mtmp, meta).await.map_err(|e| e.to_string())?;
         Ok(Arc::new(Entry { body, content_type, stored_at }))
     }
 
