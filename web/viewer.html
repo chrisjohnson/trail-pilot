@@ -455,8 +455,10 @@ async function init() {
   // drawn pointing up, so up is the front). Recomputed per frame so it stays
   // correct while the camera orbits; demand render mode only redraws on change.
   viewer.scene.postRender.addEventListener(() => {
-    const cam = viewer.scene.camera;
-    const c0 = cam.cartoToCanvasCoordinates(runner.position);
+    // Cosmetic feature — must never take down Cesium rendering.
+    try {
+    const scene = viewer.scene;
+    const c0 = scene.cartesianToCanvasCoordinates(runner.position);
     if (!c0) return; // off-screen — keep last rotation
     const i = Math.max(0, Math.min(playI, N - 2));
     const toR = x => x * Math.PI / 180;
@@ -473,13 +475,14 @@ async function init() {
       const fwd = Cesium.Cartesian3.fromDegrees(
         flat[i*4] + (Math.sin(hd) * step) / (111320 * Math.cos(toR(flat[i*4+1]))),
         flat[i*4+1] + (Math.cos(hd) * step) / 110574, 0);
-      const c1 = cam.cartoToCanvasCoordinates(fwd);
+      const c1 = scene.cartesianToCanvasCoordinates(fwd);
       if (!c1) return;
       dx = c1.x - c0.x; dy = c1.y - c0.y;
       if (dx*dx + dy*dy >= 4) break;
     }
     if (dx*dx + dy*dy < 4) return; // camera looks exactly down-track
     runner.billboard.rotation = -Math.atan2(dx, -dy); // billboard.rotation is CCW from up
+    } catch (e) { /* rotation is best-effort */ }
   });
 
   const markers = [];
