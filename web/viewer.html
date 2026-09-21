@@ -208,7 +208,7 @@ async function init() {
     pfBtn.disabled = true;
     pfBtn.classList.add('pf-ready');
     pfBtn.textContent = 'Available offline';
-    pfStatus.textContent = 'all tiles cached — renders with no internet';
+    pfStatus.textContent = 'All tiles cached';
   };
   const pfCheckCoverage = async () =>
     (await (await fetch('/prefetch/coverage?route=' + encodeURIComponent(routeParam) + '&zmin=10&zmax=17&marginKm=1')).json());
@@ -436,8 +436,9 @@ async function init() {
     const runW = 36, runH = Math.round(36 * VHt / VW);
     window.__runnerBillboard = { runSVG, runW, runH };
   }
+  let runnerPos = Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0);
   const runner = viewer.entities.add({
-    position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
+    position: runnerPos,
     billboard: {
       image: window.__runnerBillboard.runSVG, width: window.__runnerBillboard.runW, height: window.__runnerBillboard.runH,
       horizontalOrigin: Cesium.HorizontalOrigin.CENTER, verticalOrigin: Cesium.VerticalOrigin.CENTER,
@@ -458,7 +459,7 @@ async function init() {
     // Cosmetic feature — must never take down Cesium rendering.
     try {
     const scene = viewer.scene;
-    const c0 = scene.cartesianToCanvasCoordinates(runner.position);
+    const c0 = scene.cartesianToCanvasCoordinates(runnerPos);
     if (!c0) return; // off-screen — keep last rotation
     const i = Math.max(0, Math.min(playI, N - 2));
     const toR = x => x * Math.PI / 180;
@@ -696,7 +697,7 @@ async function init() {
     for (const b of breakInfo) { if (at >= b.start && at <= b.end) { i = b.preIdx; lon = flat[i*4]; lat = flat[i*4+1]; break; } }
     if (lon === undefined) { const p = pointAt(at); lon = p[0]; lat = p[1]; }
     const rPos = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
-    runner.position = rPos; runnerGlow.position = rPos; playI = i;
+    runner.position = rPos; runnerGlow.position = rPos; playI = i; runnerPos = rPos;
     milestoneRead.textContent = (distArr[i]/1609.344).toFixed(2) + ' mi';
     timeRead.textContent = fmtClock(at);
     // Regrow the purple (traveled) halo a few times a second (a clampToGround polyline that
@@ -706,6 +707,7 @@ async function init() {
       glowTraveled.polyline.positions = Cesium.Cartesian3.fromDegreesArray(routeLonLat.subarray(0,(i+1)*2));
     }
     drawElev(at);
+    viewer.scene.requestRender(); // demand mode: scrub/click/touch/play must ask for a frame
   };
   const elevFrac = (e) => { const r = elevCanvas.getBoundingClientRect();
     return Math.max(0, Math.min(1, (e.clientX-r.left-padL)/(r.width-padL-padR))); };
