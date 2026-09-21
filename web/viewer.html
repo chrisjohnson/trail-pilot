@@ -424,53 +424,71 @@ async function init() {
   {
     const list = CONVOYS[runKind], VW = 28, VH = 32, GAP = 8;
     const VHt = list.length * VH + (list.length - 1) * GAP + 4;
-    let s = "<svg xmlns='http://www.w3.org/2000/svg' width='" + VW + "' height='" + VHt + "' viewBox='0 0 " + VW + " " + VHt + "'>";
+    // Inner content: the convoy strip, top-down, front (lead vehicle) at top.
+    let inner = "";
     list.forEach((kind, i) => {
       const y = 2 + i * (VH + GAP);
-      if (i > 0) s += "<line x1='14' y1='" + (y - GAP) + "' x2='14' y2='" + y + "' stroke='#111418' stroke-width='2.5'/>"; // tow line
-      s += "<g transform='translate(2," + y + ")'>" + VEH(kind) + "</g>";
+      if (i > 0) inner += "<line x1='14' y1='" + (y - GAP) + "' x2='14' y2='" + y + "' stroke='#111418' stroke-width='2.5'/>"; // tow line
+      inner += "<g transform='translate(2," + y + ")'>" + VEH(kind) + "</g>";
     });
-    s += "</svg>";
-    window.__runSVG = s; // for debugging
-    const runSVG = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s);
+    // The quad is an axis-aligned SQUARE (so Cesium's bounding-box UV mapping
+    // is the identity), and the heading is baked into the image itself: the
+    // square canvas carries the centered convoy, rotated so its front points
+    // down-track. SVG rotate() is clockwise in screen space, which matches
+    // compass heading (clockwise from north).
+    const S = VHt; // square canvas side (== convoy length)
+    const runSVGrot = (deg) => {
+      const d = (deg || 0) % 360;
+      let s = "<svg xmlns='http://www.w3.org/2000/svg' width='" + S + "' height='" + S + "' viewBox='0 0 " + S + " " + S + "'>" +
+        "<g transform='rotate(" + d + " " + S/2 + " " + S/2 + ")'>" +
+        "<g transform='translate(" + (S - VW) / 2 + ",0)'>" + inner + "</g></g></svg>";
+      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s);
+    };
+    window.__runSVG = runSVGrot(0); // for debugging
     const runW = 36, runH = Math.round(36 * VHt / VW);
-    window.__runnerBillboard = { runSVG, runW, runH };
+    window.__runnerBillboard = { runSVGrot, runSVG: runSVGrot(0), runW, runH };
   }
-  // The convoy lies FLAT on the ground: a terrain-clamped quad the size of
-  // the convoy with the convoy SVG as its image material. A low camera angle
-  // foreshortens it toward a profile instead of showing a screen-space
-  // sticker, and it hugs the terrain. The glow point stays as the far-zoom
-  // locator (a real-size quad is sub-pixel at route-overview range).
+  // The convoy lies FLAT on the ground: an axis-aligned square quad just a
+  // couple of meters above the ellipsoid (the scene ground — hillshaded topo
+  // imagery, no terrain mesh), carrying the convoy SVG as its image material.
+  // The quad stays axis-aligned so Cesium's bounding-box UV mapping is the
+  // identity (image top = north); the heading is baked into the image itself
+  // (rotated around the canvas center) so the convoy front points down-track
+  // at any heading without clipping. Cesium 1.125 notes: ImageMaterialProperty
+  // takes an options object ({image, transparent}) — the old (image, options)
+  // form silently produced a white, imageless material. The glow point stays
+  // as the far-zoom locator (a real-size quad is sub-pixel at overview range).
   const RUN_W_M = 4; // convoy width in meters (slightly heroic scale)
   const RUN_L_M = RUN_W_M * window.__runnerBillboard.runH / window.__runnerBillboard.runW;
+  const RUN_S_M = RUN_L_M + 0.6; // square side: fits the convoy at any rotation
+  const RUN_H_M = 1.5; // meters above the ellipsoid ground
   const toRad = x => x * Math.PI / 180;
-  const runMat = new Cesium.ImageMaterialProperty(window.__runnerBillboard.runSVG, { transparent: true });
+  const runMat = new Cesium.ImageMaterialProperty({ image: window.__runnerBillboard.runSVG, transparent: true });
   const runnerPoly = viewer.entities.add({
     polygon: {
       hierarchy: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
-      material: runMat,
-      clampToGround: true
+      height: RUN_H_M,
+      material: runMat
     }
   });
-  // Position + orient the quad at route index i (compass heading over a small
-  // window so it points down-track).
+  // Position the quad at route index i and point the convoy down-track
+  // (compass heading over a small window, baked into the image).
+  let lastHdDeg = null;
   const setRunnerQuad = (i, lon, lat) => {
     const ia = (i - 3 < 0 ? 0 : i - 3) * 4, ib = Math.min(i + 3, N - 1) * 4;
     const hd = Math.atan2((flat[ib] - flat[ia]) * Math.cos(toRad(lat)), flat[ib+1] - flat[ia+1]);
     if (!isFinite(hd)) return;
-    const e = Math.sin(hd), nn = Math.cos(hd);      // heading direction (east, north)
-    const re = Math.cos(hd), rn = -Math.sin(hd);    // right of heading
+    const o = RUN_S_M / 2;
     const off = (mE, mN) => Cesium.Cartesian3.fromDegrees(
-      lon + mE / (111320 * Math.cos(toRad(lat))), lat + mN / 110574, 0);
+      lon + mE / (111320 * Math.cos(toRad(lat))), lat + mN / 110574, RUN_H_M);
     runnerPoly.polygon.hierarchy = [
-      off(-RUN_L_M/2*e + RUN_W_M/2*re, -RUN_L_M/2*nn + RUN_W_M/2*rn),
-      off( RUN_L_M/2*e + RUN_W_M/2*re,  RUN_L_M/2*nn + RUN_W_M/2*rn),
-      off( RUN_L_M/2*e - RUN_W_M/2*re,  RUN_L_M/2*nn - RUN_W_M/2*rn),
-      off(-RUN_L_M/2*e - RUN_W_M/2*re, -RUN_L_M/2*nn - RUN_W_M/2*rn)
+      off(-o, -o), off(o, -o), off(o, o), off(-o, o)
     ];
-    // Polygon UVs run U=east, V=north with the image top facing south by
-    // default; rotate so the image top (convoy front) points down-track.
-    runMat.rotation = Math.PI - hd;
+    const hdDeg = hd * 180 / Math.PI;
+    if (Math.abs(hdDeg - lastHdDeg) > 0.5) { // re-bake the image only when it visibly turns
+      runMat.image = window.__runnerBillboard.runSVGrot(hdDeg);
+      lastHdDeg = hdDeg;
+    }
   };
   setRunnerQuad(0, flat[0], flat[1]);
   const runnerGlow = viewer.entities.add({
