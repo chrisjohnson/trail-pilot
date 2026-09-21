@@ -450,6 +450,37 @@ async function init() {
     point: { pixelSize: 26, color: Cesium.Color.fromCssColorString('rgba(255,210,63,0.4)'),
              disableDepthTestDistance: Number.POSITIVE_INFINITY }
   });
+  // Face the convoy the way it is traveling: every rendered frame, rotate the
+  // billboard toward the route on-screen bearing at the playhead (the SVG is
+  // drawn pointing up, so up is the front). Recomputed per frame so it stays
+  // correct while the camera orbits; demand render mode only redraws on change.
+  viewer.scene.postRender.addEventListener(() => {
+    const cam = viewer.scene.camera;
+    const c0 = cam.cartoToCanvasCoordinates(runner.position);
+    if (!c0) return; // off-screen — keep last rotation
+    const i = Math.max(0, Math.min(playI, N - 2));
+    const toR = x => x * Math.PI / 180;
+    // compass heading (radians, clockwise from north) over a small local window
+    const a = (i - 3 < 0 ? 0 : i - 3) * 4, b = Math.min(i + 3, N - 1) * 4;
+    const ex = (flat[b] - flat[a]) * Math.cos(toR(flat[i*4+1]));
+    const ny = flat[b+1] - flat[a+1];
+    if (ex === 0 && ny === 0) return;
+    const hd = Math.atan2(ex, ny);
+    // project a point ahead of the runner (grow the step if the camera is too
+    // far away for 40 m to resolve on screen)
+    let dx = 0, dy = 0;
+    for (let step = 40; step <= 40000; step *= 10) {
+      const fwd = Cesium.Cartesian3.fromDegrees(
+        flat[i*4] + (Math.sin(hd) * step) / (111320 * Math.cos(toR(flat[i*4+1]))),
+        flat[i*4+1] + (Math.cos(hd) * step) / 110574, 0);
+      const c1 = cam.cartoToCanvasCoordinates(fwd);
+      if (!c1) return;
+      dx = c1.x - c0.x; dy = c1.y - c0.y;
+      if (dx*dx + dy*dy >= 4) break;
+    }
+    if (dx*dx + dy*dy < 4) return; // camera looks exactly down-track
+    runner.billboard.rotation = -Math.atan2(dx, -dy); // billboard.rotation is CCW from up
+  });
 
   const markers = [];
   const pushEntity = (m) => {
@@ -654,7 +685,7 @@ async function init() {
   sizeElev();
   window.addEventListener('resize', () => { sizeElev(); drawElev(elapsed); });
 
-  let elapsed = 0, playing = false, lastT = 0, speed = 120, lastGlow = 0;
+  let elapsed = 0, playing = false, lastT = 0, speed = 120, lastGlow = 0, playI = 0;
   let previewActive = false, previewAt = null;
   const showAt = (at, now) => {
     let i = Math.min(timeToIndex(at), N-2);
@@ -662,7 +693,7 @@ async function init() {
     for (const b of breakInfo) { if (at >= b.start && at <= b.end) { i = b.preIdx; lon = flat[i*4]; lat = flat[i*4+1]; break; } }
     if (lon === undefined) { const p = pointAt(at); lon = p[0]; lat = p[1]; }
     const rPos = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
-    runner.position = rPos; runnerGlow.position = rPos;
+    runner.position = rPos; runnerGlow.position = rPos; playI = i;
     milestoneRead.textContent = (distArr[i]/1609.344).toFixed(2) + ' mi';
     timeRead.textContent = fmtClock(at);
     // Regrow the purple (traveled) halo a few times a second (a clampToGround polyline that
