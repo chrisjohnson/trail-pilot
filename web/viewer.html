@@ -436,54 +436,47 @@ async function init() {
     const runW = 36, runH = Math.round(36 * VHt / VW);
     window.__runnerBillboard = { runSVG, runW, runH };
   }
-  let runnerPos = Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0);
-  const runner = viewer.entities.add({
-    position: runnerPos,
-    billboard: {
-      image: window.__runnerBillboard.runSVG, width: window.__runnerBillboard.runW, height: window.__runnerBillboard.runH,
-      horizontalOrigin: Cesium.HorizontalOrigin.CENTER, verticalOrigin: Cesium.VerticalOrigin.CENTER,
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      scaleByDistance: new Cesium.NearFarScalar(0, 1.15, 120000, 0.5)
+  // The convoy lies FLAT on the ground: a terrain-clamped quad the size of
+  // the convoy with the convoy SVG as its image material. A low camera angle
+  // foreshortens it toward a profile instead of showing a screen-space
+  // sticker, and it hugs the terrain. The glow point stays as the far-zoom
+  // locator (a real-size quad is sub-pixel at route-overview range).
+  const RUN_W_M = 4; // convoy width in meters (slightly heroic scale)
+  const RUN_L_M = RUN_W_M * window.__runnerBillboard.runH / window.__runnerBillboard.runW;
+  const toRad = x => x * Math.PI / 180;
+  const runMat = new Cesium.ImageMaterialProperty(window.__runnerBillboard.runSVG, { transparent: true });
+  const runnerPoly = viewer.entities.add({
+    polygon: {
+      hierarchy: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
+      material: runMat,
+      clampToGround: true
     }
   });
+  // Position + orient the quad at route index i (compass heading over a small
+  // window so it points down-track).
+  const setRunnerQuad = (i, lon, lat) => {
+    const ia = (i - 3 < 0 ? 0 : i - 3) * 4, ib = Math.min(i + 3, N - 1) * 4;
+    const hd = Math.atan2((flat[ib] - flat[ia]) * Math.cos(toRad(lat)), flat[ib+1] - flat[ia+1]);
+    if (!isFinite(hd)) return;
+    const e = Math.sin(hd), nn = Math.cos(hd);      // heading direction (east, north)
+    const re = Math.cos(hd), rn = -Math.sin(hd);    // right of heading
+    const off = (mE, mN) => Cesium.Cartesian3.fromDegrees(
+      lon + mE / (111320 * Math.cos(toRad(lat))), lat + mN / 110574, 0);
+    runnerPoly.polygon.hierarchy = [
+      off(-RUN_L_M/2*e + RUN_W_M/2*re, -RUN_L_M/2*nn + RUN_W_M/2*rn),
+      off( RUN_L_M/2*e + RUN_W_M/2*re,  RUN_L_M/2*nn + RUN_W_M/2*rn),
+      off( RUN_L_M/2*e - RUN_W_M/2*re,  RUN_L_M/2*nn - RUN_W_M/2*rn),
+      off(-RUN_L_M/2*e - RUN_W_M/2*re, -RUN_L_M/2*nn - RUN_W_M/2*rn)
+    ];
+    // Polygon UVs run U=east, V=north with the image top facing south by
+    // default; rotate so the image top (convoy front) points down-track.
+    runMat.rotation = Math.PI - hd;
+  };
+  setRunnerQuad(0, flat[0], flat[1]);
   const runnerGlow = viewer.entities.add({
     position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
     point: { pixelSize: 26, color: Cesium.Color.fromCssColorString('rgba(255,210,63,0.4)'),
              disableDepthTestDistance: Number.POSITIVE_INFINITY }
-  });
-  // Face the convoy the way it is traveling: every rendered frame, rotate the
-  // billboard toward the route on-screen bearing at the playhead (the SVG is
-  // drawn pointing up, so up is the front). Recomputed per frame so it stays
-  // correct while the camera orbits; demand render mode only redraws on change.
-  viewer.scene.postRender.addEventListener(() => {
-    // Cosmetic feature — must never take down Cesium rendering.
-    try {
-    const scene = viewer.scene;
-    const c0 = scene.cartesianToCanvasCoordinates(runnerPos);
-    if (!c0) return; // off-screen — keep last rotation
-    const i = Math.max(0, Math.min(playI, N - 2));
-    const toR = x => x * Math.PI / 180;
-    // compass heading (radians, clockwise from north) over a small local window
-    const a = (i - 3 < 0 ? 0 : i - 3) * 4, b = Math.min(i + 3, N - 1) * 4;
-    const ex = (flat[b] - flat[a]) * Math.cos(toR(flat[i*4+1]));
-    const ny = flat[b+1] - flat[a+1];
-    if (ex === 0 && ny === 0) return;
-    const hd = Math.atan2(ex, ny);
-    // project a point ahead of the runner (grow the step if the camera is too
-    // far away for 40 m to resolve on screen)
-    let dx = 0, dy = 0;
-    for (let step = 40; step <= 40000; step *= 10) {
-      const fwd = Cesium.Cartesian3.fromDegrees(
-        flat[i*4] + (Math.sin(hd) * step) / (111320 * Math.cos(toR(flat[i*4+1]))),
-        flat[i*4+1] + (Math.cos(hd) * step) / 110574, 0);
-      const c1 = scene.cartesianToCanvasCoordinates(fwd);
-      if (!c1) return;
-      dx = c1.x - c0.x; dy = c1.y - c0.y;
-      if (dx*dx + dy*dy >= 4) break;
-    }
-    if (dx*dx + dy*dy < 4) return; // camera looks exactly down-track
-    runner.billboard.rotation = -Math.atan2(dx, -dy); // billboard.rotation is CCW from up
-    } catch (e) { /* rotation is best-effort */ }
   });
 
   const markers = [];
@@ -689,7 +682,7 @@ async function init() {
   sizeElev();
   window.addEventListener('resize', () => { sizeElev(); drawElev(elapsed); });
 
-  let elapsed = 0, playing = false, lastT = 0, speed = 120, lastGlow = 0, playI = 0;
+  let elapsed = 0, playing = false, lastT = 0, speed = 120, lastGlow = 0;
   let previewActive = false, previewAt = null;
   const showAt = (at, now) => {
     let i = Math.min(timeToIndex(at), N-2);
@@ -697,7 +690,7 @@ async function init() {
     for (const b of breakInfo) { if (at >= b.start && at <= b.end) { i = b.preIdx; lon = flat[i*4]; lat = flat[i*4+1]; break; } }
     if (lon === undefined) { const p = pointAt(at); lon = p[0]; lat = p[1]; }
     const rPos = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
-    runner.position = rPos; runnerGlow.position = rPos; playI = i; runnerPos = rPos;
+    runnerGlow.position = rPos; setRunnerQuad(i, lon, lat);
     milestoneRead.textContent = (distArr[i]/1609.344).toFixed(2) + ' mi';
     timeRead.textContent = fmtClock(at);
     // Regrow the purple (traveled) halo a few times a second (a clampToGround polyline that
