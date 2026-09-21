@@ -231,8 +231,9 @@ pub fn parse_gpx(xml: &str) -> (String, Vec<Pt>) {
 }
 
 struct Brk {
-    start: usize,
-    end: usize,
+    t_start: f64, // seconds on the run clock
+    t_end: f64,   // seconds on the run clock
+    at: usize,    // point index for position (last point at/before the break)
     dur_sec: i64,
 }
 
@@ -269,7 +270,11 @@ fn detect_breaks(pts: &[Pt]) -> (Vec<Brk>, f64, Vec<f64>) {
         let j = lo;
         stationary[i] = p_d[j] - p_d[i] < BREAK_DRIFT_M;
     }
-    let mut brks = Vec::new();
+    // Collect breaks as intervals on the run clock from two sources:
+    //  (a) runs of stationary points (the watch kept logging while stopped), and
+    //  (b) point-free gaps: a long time jump between consecutive points with
+    //      little movement (the watch stopped logging mid-stop).
+    let mut ivs: Vec<(f64, f64, usize)> = Vec::new(); // (t_start, t_end, at)
     let mut i = 0;
     while i < n {
         if !stationary[i] {
@@ -281,12 +286,35 @@ fn detect_breaks(pts: &[Pt]) -> (Vec<Brk>, f64, Vec<f64>) {
         while e + 1 < n && stationary[e + 1] {
             e += 1;
         }
-        let dur_sec = ((p_t[e] - p_t[s]) / 1.0).round() as i64;
-        if dur_sec >= MIN_BREAK_SEC {
-            brks.push(Brk { start: s, end: e, dur_sec });
+        if (p_t[e] - p_t[s]) >= MIN_BREAK_SEC as f64 {
+            ivs.push((p_t[s], p_t[e], s));
         }
         i = e + 1;
     }
+    for i in 0..n - 1 {
+        let dt = p_t[i + 1] - p_t[i];
+        if dt >= MIN_BREAK_SEC as f64 && seg_d[i + 1] < BREAK_DRIFT_M {
+            ivs.push((p_t[i], p_t[i + 1], i));
+        }
+    }
+    // Merge overlapping or adjacent intervals into single breaks.
+    ivs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut merged: Vec<(f64, f64, usize)> = Vec::new();
+    for iv in ivs {
+        match merged.last_mut() {
+            Some(m) if iv.0 <= m.1 + 1.0 => m.1 = m.1.max(iv.1),
+            _ => merged.push(iv),
+        }
+    }
+    let brks = merged
+        .into_iter()
+        .map(|(a, b, at)| Brk {
+            t_start: a,
+            t_end: b,
+            at,
+            dur_sec: (b - a).round() as i64,
+        })
+        .collect();
     (brks, total_m, p_d)
 }
 
@@ -394,12 +422,12 @@ pub fn process(xml: &str, tz_grid: Option<&TzGrid>, name_hint: Option<&str>) -> 
         .map(|b| {
             json!({
                 "type": "break",
-                "lon": num(pts[b.start].lon),
-                "lat": num(pts[b.start].lat),
-                "mile": format!("{:.2}", p_d[b.start] / 1609.34),
+                "lon": num(pts[b.at].lon),
+                "lat": num(pts[b.at].lat),
+                "mile": format!("{:.2}", p_d[b.at] / 1609.34),
                 "durSec": b.dur_sec,
                 "durStr": fmt_dur(b.dur_sec as f64),
-                "startUTC": utc_str(t0 + b.start as f64 * 1000.0),
+                "startUTC": utc_str(t0 + b.t_start * 1000.0),
             })
         })
         .collect();
