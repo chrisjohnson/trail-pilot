@@ -447,6 +447,52 @@ struct PrefetchReq {
     margin_km: Option<f64>,
 }
 
+/// GET /prefetch/coverage?route=<slug-or-name>[&zmin&zmax&marginKm] —
+/// how much of the route's tile set (same defaults as the pre-fetch button)
+/// is already in the durable cache. complete=true means the route renders
+/// with no internet.
+async fn prefetch_coverage(State(state): State<App>, Query(req): Query<PrefetchReq>) -> Response {
+    let Some(want) = req.route.filter(|s| !s.is_empty()) else {
+        return err_response(StatusCode::BAD_REQUEST, "no route specified — include ?route=<slug-or-name>");
+    };
+    let reg = state.routes.lock().await;
+    let Some(entry) = find_route(&reg, &want) else {
+        return err_response(StatusCode::NOT_FOUND, &format!("no such route: {want}"));
+    };
+    let zmin = req.zmin.unwrap_or(10).max(2);
+    let zmax = req.zmax.unwrap_or(17).min(17);
+    if zmin > zmax {
+        return err_response(StatusCode::BAD_REQUEST, "zmin > zmax");
+    }
+    let margin_km = req.margin_km.unwrap_or(1.0);
+    let points = entry.points.clone();
+    let origin = state.cfg.tile_origin.clone();
+    drop(reg); // don't hold the registry lock across the disk scan
+    let urls = match tokio::task::spawn_blocking(move || {
+        prefetch::tile_urls(&points, &origin, zmin, zmax, margin_km)
+    })
+    .await
+    {
+        Ok(urls) => urls,
+        Err(_) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, "tile computation aborted"),
+    };
+    let total = urls.len();
+    let cache = state.cache.clone();
+    let cached = match tokio::task::spawn_blocking(move || cache.count_cached(&urls))
+        .await
+    {
+        Ok(n) => n,
+        Err(_) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, "cache scan aborted"),
+    };
+    Json(json!({
+        "route": want,
+        "total": total,
+        "cached": cached,
+        "complete": cached == total,
+    }))
+    .into_response()
+}
+
 async fn prefetch_start(State(state): State<App>, Json(req): Json<PrefetchReq>) -> Response {
     let Some(want) = req.route.filter(|s| !s.is_empty()) else {
         return err_response(StatusCode::BAD_REQUEST, "no route specified — include route (slug or name) in the request");
@@ -592,6 +638,7 @@ async fn main() {
         .route("/tiles/*rest", get(tile))
         .route("/cdn/*rest", get(cdn))
         .route("/prefetch", get(prefetch_list).post(prefetch_start))
+        .route("/prefetch/coverage", get(prefetch_coverage))
         .route("/prefetch/:id", get(prefetch_status))
         .fallback(static_file)
         .with_state(state);

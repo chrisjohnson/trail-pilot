@@ -203,6 +203,27 @@ impl Cache {
         Ok(Arc::new(Entry { body, content_type, stored_at }))
     }
 
+    /// How many of the given URLs are currently in the cache (fresh, under
+    /// TTL). Synchronous — call from spawn_blocking (it stats small files).
+    pub fn count_cached(&self, urls: &[String]) -> usize {
+        let mut n = 0;
+        for u in urls {
+            let (bin, meta) = self.paths(u);
+            if !(meta.is_file() && bin.is_file()) {
+                continue;
+            }
+            if let Ok(m) = std::fs::read_to_string(&meta) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&m) {
+                    let stored_at = v["stored_at"].as_i64().unwrap_or(0);
+                    if now_secs() - stored_at < TTL_SECS {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n
+    }
+
     /// Approximate stats for /healthz: file count + total bytes.
     pub fn stats(&self) -> (u64, u64) {
         let mut files = 0u64;

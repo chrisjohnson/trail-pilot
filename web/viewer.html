@@ -37,6 +37,7 @@
   #legend .item { display:flex; align-items:center; padding:4px 0; cursor:pointer; user-select:none; }
   #pf-btn { font-size:12px; font-weight:600; padding:6px 10px; border-radius:7px; border:1px solid rgba(255,255,255,.25); background:rgba(255,255,255,.08); color:#fff; cursor:pointer; }
   #pf-btn:disabled { opacity:.55; cursor:default; }
+  #pf-btn.pf-ready, #pf-btn.pf-ready:disabled { opacity:1; background:#43d9ad; border-color:#43d9ad; color:#06231b; }
   #pf-status { font-size:11px; color:var(--muted); margin-top:3px; min-height:13px; }
   #legend .item:hover { color:#fff; }
   #legend .sw { width:20px; height:5px; border-radius:3px; margin-right:9px; display:inline-block; }
@@ -202,8 +203,18 @@ async function init() {
   const pfStatus = document.getElementById('pf-status');
   let pfTimer = null;
   const pfStop = () => { if (pfTimer) { clearInterval(pfTimer); pfTimer = null; } };
+  // Fully-cached state: green "Available offline" button
+  const pfMarkAvailable = () => {
+    pfBtn.disabled = true;
+    pfBtn.classList.add('pf-ready');
+    pfBtn.textContent = 'Available offline';
+    pfStatus.textContent = 'all tiles cached — renders with no internet';
+  };
+  const pfCheckCoverage = async () =>
+    (await (await fetch('/prefetch/coverage?route=' + encodeURIComponent(routeParam) + '&zmin=10&zmax=17&marginKm=1')).json());
+  pfCheckCoverage().then(c => { if (c.complete) pfMarkAvailable(); }).catch(() => {});
   pfBtn.addEventListener('click', async () => {
-    pfStop(); pfBtn.disabled = true; pfStatus.textContent = 'starting…';
+    pfStop(); pfBtn.disabled = true; pfBtn.classList.remove('pf-ready'); pfStatus.textContent = 'starting…';
     try {
       const r = await fetch('/prefetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ route: routeParam, zmin: 10, zmax: 17, marginKm: 1 }) });
       const j = await r.json();
@@ -213,8 +224,13 @@ async function init() {
         const bits = s2.done + '/' + s2.total + ' tiles (' + s2.pct + '%' + (s2.skipped ? ', ' + s2.skipped + ' skipped (no upstream coverage)' : '') + (s2.failed && s2.state !== 'done' ? ', ' + s2.failed + ' retrying' : '') + ')';
         pfStatus.textContent = bits;
         if (s2.state === 'done') {
-          pfStop(); pfBtn.disabled = false;
-          pfStatus.textContent = 'done — ' + s2.done + '/' + s2.total + (s2.skipped ? ', ' + s2.skipped + ' skipped (no upstream coverage)' : '') + ' — ready offline';
+          pfStop();
+          const c2 = await pfCheckCoverage().catch(() => null);
+          if (c2 && c2.complete) { pfMarkAvailable(); }
+          else {
+            pfBtn.disabled = false;
+            pfStatus.textContent = 'done — ' + s2.done + '/' + s2.total + (s2.skipped ? ', ' + s2.skipped + ' skipped (no upstream coverage)' : '') + ' — ready offline';
+          }
         }
       };
       await tick();
