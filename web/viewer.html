@@ -334,6 +334,7 @@ async function init() {
     sceneModePicker: false, selectionIndicator: false, navigationHelpButton: false,
     baseLayerPicker: false
   });
+  window.__viewer = viewer; // debug/test hook
   // OpenTopoMap hillshaded topo map as base imagery.
   // Canonical sync provider (Sw constructor accepts url/tileWidth/tileHeight/maximumLevel) added via addImageryProvider.
   viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
@@ -531,6 +532,42 @@ async function init() {
   });
   // Position the quad at route index i and point the convoy down-track
   // (compass heading over a small window, baked into the image).
+  let lastBbPos = [flat[0], flat[1], 0];
+  // Screen-space vehicle marker: at overview zoom the ground quad (4 m wide,
+  // real scale) is sub-pixel, so the same convoy image also renders as a
+  // fixed-size billboard that stays visible at any zoom. Its screen rotation
+  // tracks (route heading - camera heading), so the lead vehicle keeps
+  // pointing down-track while the user orbits. Hidden below 250 m altitude,
+  // where the ground quad is large enough to read on its own.
+  const BB_W = 48;
+  const runBb = viewer.entities.add({
+    position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 2),
+    billboard: {
+      image: window.__runnerBillboard.runSVG,
+      width: BB_W, height: BB_W,
+      rotation: 0,
+      disableDepthTest: true,
+      show: false
+    }
+  });
+  let lastBbKey = null;
+  const updateBb = (lon, lat, hd) => {
+    const cam = viewer.camera;
+    const alt = cam.positionCartographic.height;
+    const showBb = alt > 250;
+    let rot = hd - cam.heading;
+    rot = ((rot % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+    if (!isFinite(rot)) rot = 0;
+    const key = (showBb ? 1 : 0) + '|' + rot.toFixed(3) + '|' + lon.toFixed(6) + '|' + lat.toFixed(6);
+    if (key === lastBbKey) return;
+    lastBbKey = key;
+    runBb.billboard.show = showBb;
+    runBb.billboard.rotation = rot;
+    runBb.position = Cesium.Cartesian3.fromDegrees(lon, lat, 2);
+  };
+  viewer.scene.camera.changed.addEventListener(() => {
+    if (lastBbKey !== null) updateBb(lastBbPos[0], lastBbPos[1], lastBbPos[2]);
+  });
   let lastHdDeg = null;
   const setRunnerQuad = (i, lon, lat) => {
     const ia = (i - 3 < 0 ? 0 : i - 3) * 4, ib = Math.min(i + 3, N - 1) * 4;
@@ -547,6 +584,8 @@ async function init() {
       runMat.image = window.__runnerBillboard.runSVGrot(hdDeg);
       lastHdDeg = hdDeg;
     }
+    lastBbPos = [lon, lat, hd];
+    updateBb(lon, lat, hd);
   };
   setRunnerQuad(0, flat[0], flat[1]);
   const runnerGlow = viewer.entities.add({
