@@ -1,88 +1,54 @@
 # AGENTS.md — trail-pilot
 
-## The one non-obvious invariant: the server always listens on **8137**, and it is
-## published on **loopback only**
+A Rust binary that ingests GPX, works out where a run stopped and why, and
+serves a Cesium viewer over a tile cache. One process, no database, no
+authentication and no multi-user story — it's a personal tool, and that shapes
+both security rules below.
 
-`-p 127.0.0.1:8137:8137`. Never `-p 8137:8137`, never `0.0.0.0`, never a different
-port.
-
-Both halves are load-bearing and both are easy to break by accident, because
-`-p 8137:8137` looks identical to the correct form and simply binds every interface.
-
-**Why 8137 is fixed, not just "the default":** the service is fronted by a
-*hard-coded* reverse-proxy entry in the `local-ai-machine` infra repo —
-`docker/caddy/Caddyfile` routes `trail-pilot.local-ai-machine.johnsonlab.dev`
-to `127.0.0.1:8137`. Nothing discovers this service; the port number is the entire
-contract between the two repos. Change it here and the hostname starts 502-ing with
-no error anywhere in this codebase. If the port ever genuinely needs to move, move
-both sides in the same change and say so in the commit message.
-
-**Why loopback-only:** on the host, `trailpilot` is reached through Caddy, which is
-the only thing that should face the LAN (Caddy terminates TLS on :443, already the
-one open inbound port). Publishing `0.0.0.0` would bypass that entirely — the app
-has no authentication of any kind (`POST /routes/ingest` accepts arbitrary GPX from
-anyone, `/cdn` is an on-demand fetcher, CORS is `*`), so a bare published port means
-any device that can route to it can push routes and drive outbound tile fetches.
-The infra repo's standing decision on this
-(`knowledge/decisions/2026-07-23-firewall-loopback-binding-fix.md`) is that the
-host firewall is *not* a trustworthy gate for published container ports, so services
-bind loopback and Caddy does the exposing. Follow that pattern; don't assume a
-firewall rule will save you.
-
-**Local dev is unaffected:** `./run.sh 8137 input/foo.gpx` binds `0.0.0.0` for
-convenience on a dev machine, which is fine for a laptop. It is not fine on a shared
-or networked host — that's what the Caddy path is for.
-
-## How it actually runs on `local-ai-machine`
-
-Not in that repo's compose project, and not under dockerd. It runs as a
-**rootless Podman container owned by the `dsh` user**, driven over that user's
-systemd-activated API socket. (How that podman setup is wired, and what it
-deliberately does *not* provide, is documented in the `Podman` section of
-`dsh-deploy`'s README and the global `AGENTS.md` — not repeated here.)
+## Getting it running
 
 ```sh
-export CONTAINER_HOST=unix:///run/user/1002/podman/podman.sock
-podman run -d --name trailpilot \
-  -p 127.0.0.1:8137:8137 \
-  -v tp-data:/data -v tp-cache:/cache \
-  ghcr.io/chrisjohnson/trail-pilot:latest
+./run.sh 8137 input/your-run.gpx     # dev: build + serve a route
 ```
 
-No `--restart`: nothing supervises containers on this host, so the flag does
-nothing (verified by killing one and watching it stay exited). Sessions start and
-stop this container routinely as part of ordinary work — that lifecycle is the
-point on this machine, which builds and exercises the app rather than hosting it.
-Released deployments run elsewhere.
+`--port` defaults to `8137`. Any deployment that fronts the app with a reverse
+proxy pins that number **by hand** — nothing advertises or discovers the
+service, so the port number is the entire contract between this repo and
+whatever sits in front of it. Changing the default means editing the proxy in
+the same commit.
 
-Things worth knowing:
+## Don't publish it beyond loopback on a shared host
 
-- **`Exited (137)` is the box's OOM killer, not the app.** The machine runs large
-  LLMs and has reaped `trailpilot` twice, each time looking exactly like an
-  application fault — once as a blank 3D canvas that was really a dead server.
-  `podman ps -a` and `grep oom_kill /proc/vmstat` before reading server code;
-  `podman start trailpilot` to recover.
-- **`tp-data` / `tp-cache` are the whole stateful surface** — ingested routes and
-  the durable tile cache. Keep them as named volumes; losing them means re-ingesting
-  and re-prefetching.
-- **Rootless builds need fully-qualified base images.** `podman build` fails on this
-  host with `short-name "rust:1.98-slim" did not resolve to an alias` — the OS
-  generates `[[registry]]` entries but never `unqualified-search-registries`, so no
-  short-name resolution exists at all. `FROM docker.io/library/rust:1.98-slim` and
-  `docker.io/library/debian:bookworm-slim` are the fix (verified: those two lines are
-  the only thing standing between a clean build and a failed one under Podman, and
-  fully-qualified `FROM`s are better practice regardless of engine). The
-  `# syntax=` directive and `RUN --mount=type=cache` are both fine under buildah —
-  don't touch them for podman-compat reasons.
-- **`/cdn` host allow-list is a real security boundary**, not a nicety — it's an
-  on-demand network fetcher reachable over HTTP. New entries need thought; a request
-  for a non-allow-listed host must return 403.
+The server binds `0.0.0.0` unconditionally; containment is entirely a function
+of how you publish it, so under Docker/podman use `-p 127.0.0.1:8137:8137`, not
+`-p 8137:8137`. There is no auth anywhere: `POST /routes/ingest` accepts
+arbitrary GPX, `/cdn` is an on-demand fetcher, and CORS is `*`. Binding a
+routable interface means any device that can reach it can push routes and drive
+outbound fetches. Behind a reverse proxy is the intended exposure; a laptop or
+throwaway CI box can bind whatever it likes.
 
-## Verifying a change end-to-end
+## Two things not to weaken
 
-The pipeline has a byte-for-byte oracle: the server's `route_data.json` must stay
-identical to `node build/gpx2route.js` for the same GPX. Re-check that whenever
-touching `server/src/pipeline.rs`. For everything else,
+- **`/cdn`'s host allow-list is a security boundary**, not a nicety. Only
+  hosts in `--cdn-allow` (default: `unpkg.com`) may be fetched, and anything
+  else must return `403`. New entries deserve thought — it's an HTTP-reachable
+  fetcher.
+- **The pipeline must stay byte-identical to the JS oracle.** The server's
+  `route_data.json` has to match `node build/gpx2route.js` output for the same
+  GPX. Re-check whenever touching `server/src/pipeline.rs`.
+
 `friday-morning-hard-trail-run.gpx` (115.5 mi, 6,775 points, 6 breaks,
-`America/New_York`) is the reference fixture — if a change moves the break count or
-the timezone on that file, it needs justifying.
+`America/New_York`) is the reference fixture. A change that moves the break
+count or the timezone on that file needs justifying.
+
+## Containers
+
+`Dockerfile` is multi-stage and engine-agnostic — docker, podman and buildah
+all build it. Fully-qualify base images (`FROM docker.io/library/rust:1.98-slim`):
+not every engine enables short-name resolution, and a qualified name works on
+all of them. `# syntax=` and `RUN --mount=type=cache` are fine under buildah,
+so don't strip them for compatibility.
+
+`/data` (ingested routes) and `/cache` (tile cache) are the only stateful
+surface; everything else is derived, so losing them costs re-ingest and
+re-prefetch rather than correctness. Mount them as named volumes.
