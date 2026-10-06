@@ -2,7 +2,9 @@
 # trail-pilot — Rust tile-cache server + static viewer
 #
 #   docker build -t trail-pilot .
-#   docker run -p 8137:8137 -v tp-data:/data -v tp-cache:/cache trail-pilot
+#   docker run -p 127.0.0.1:8137:8137 -v tp-data:/data -v tp-cache:/cache trail-pilot
+#   (keep the host side on 127.0.0.1 unless this is a personal laptop — the server
+#    has no auth, so expose it via a reverse proxy, not by binding 0.0.0.0)
 #
 # Behavior knobs are env vars (TRAILPILOT_SLOW_MPH, TRAILPILOT_STOP_MPH,
 # TRAILPILOT_VEHICLE, TRAILPILOT_DEBUG) — see the README.

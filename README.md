@@ -214,7 +214,7 @@ Pushes to `main` build and publish **`ghcr.io/chrisjohnson/trail-pilot:latest`**
 (see `.github/workflows/docker.yml`).
 
     docker pull ghcr.io/chrisjohnson/trail-pilot:latest
-    docker run -d --name trailpilot -p 8137:8137 \
+    docker run -d --name trailpilot -p 127.0.0.1:8137:8137 \
       -v tp-data:/data -v tp-cache:/cache \
       -e TRAILPILOT_VEHICLE=jeep \
       ghcr.io/chrisjohnson/trail-pilot:latest
@@ -224,3 +224,10 @@ The viewer is served at the container's port (8137 by default; override with
 state: `/data` (ingested routes) and `/cache` (the durable tile cache —
 mount a persistent volume and pre-fetch at home, exactly as with a local
 install). All the `TRAILPILOT_*` env vars work as-is.
+
+Bind the host side to `127.0.0.1` as above on any machine that isn't your own
+laptop: the server has no authentication, so `-p 8137:8137` (which binds every
+interface) exposes route ingestion and the on-demand tile/CDN fetcher to anything
+that can reach the host. Put a TLS-terminating reverse proxy in front instead and
+keep the app on loopback. On `local-ai-machine` the port and the loopback binding
+are both fixed by a hard-coded Caddy route — see `AGENTS.md`.
