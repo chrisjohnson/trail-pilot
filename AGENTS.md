@@ -37,24 +37,31 @@ or networked host — that's what the Caddy path is for.
 
 Not in that repo's compose project, and not under dockerd. It runs as a
 **rootless Podman container owned by the `dsh` user**, driven over that user's
-systemd-activated API socket:
+systemd-activated API socket. (How that podman setup is wired, and what it
+deliberately does *not* provide, is documented in the `Podman` section of
+`dsh-deploy`'s README and the global `AGENTS.md` — not repeated here.)
 
 ```sh
-export XDG_RUNTIME_DIR=/run/user/1002
-POD="podman -H unix:///run/user/1002/podman/podman.sock"
-$POD run -d --name trailpilot \
+export CONTAINER_HOST=unix:///run/user/1002/podman/podman.sock
+podman run -d --name trailpilot \
   -p 127.0.0.1:8137:8137 \
   -v tp-data:/data -v tp-cache:/cache \
-  --memory=2g \
   ghcr.io/chrisjohnson/trail-pilot:latest
 ```
 
-Things worth knowing before changing that invocation:
+No `--restart`: nothing supervises containers on this host, so the flag does
+nothing (verified by killing one and watching it stay exited). Sessions start and
+stop this container routinely as part of ordinary work — that lifecycle is the
+point on this machine, which builds and exercises the app rather than hosting it.
+Released deployments run elsewhere.
 
-- **`--memory=…` is not optional there.** That box runs large LLMs and routinely
-  sits at ~98% memory; the kernel OOM-killer has already taken an uncapped
-  `trailpilot` container once. It's a ~50 MB steady-state process, so 1–2 GB is a
-  generous cap and costs nothing.
+Things worth knowing:
+
+- **`Exited (137)` is the box's OOM killer, not the app.** The machine runs large
+  LLMs and has reaped `trailpilot` twice, each time looking exactly like an
+  application fault — once as a blank 3D canvas that was really a dead server.
+  `podman ps -a` and `grep oom_kill /proc/vmstat` before reading server code;
+  `podman start trailpilot` to recover.
 - **`tp-data` / `tp-cache` are the whole stateful surface** — ingested routes and
   the durable tile cache. Keep them as named volumes; losing them means re-ingesting
   and re-prefetching.
