@@ -422,6 +422,11 @@ async function init() {
   const MIN_PX = 150;       // never smaller than this on screen
   const MAX_SCALE = 120;    // how far that floor is allowed to inflate them
   const ROPE_M = 0.45;      // authored bumper height, so the strap meets it
+  // How far above the ellipsoid the vehicles sit, in authored metres. Depth
+  // testing is on now, so they need to clear the globe rather than be coplanar
+  // with it; scaling it with the model keeps that margin proportional at every
+  // zoom while staying invisible at true scale.
+  const LIFT_M = 0.03;
   // There used to be a flat top-down billboard that took over above ~900 m, on
   // the theory that a pixel-floored model is a speck from up there. It was the
   // wrong call: that is the zoom where most of the map gets looked at, and the
@@ -445,7 +450,13 @@ async function init() {
           // fade again, and it fades gradually rather than swapping to a marker.
           minimumPixelSize: MIN_PX,
           maximumScale: MAX_SCALE,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          // Depth test ON. It used to be disabled so the convoy could never be
+          // clipped by the globe, and that is what tore the bodies apart: with
+          // no depth test, overlapping panels are resolved by the order their
+          // triangles were submitted in, not by which one is nearer, so a
+          // windshield frame could win against the glass in front of it and a
+          // hood face could punch a diagonal hole through the bonnet. The
+          // vehicles are lifted clear of the ellipsoid instead - see LIFT_M.
         }
       });
       // A strap between the bumpers: straight, yellow, unapologetically dumb
@@ -467,7 +478,9 @@ async function init() {
           polyline: {
             positions: new Cesium.CallbackProperty(get, false), width,
             material: Cesium.Color.fromCssColorString(css),
-            arcType: Cesium.ArcType.NONE, disableDepthTestDistance: Number.POSITIVE_INFINITY
+            // Depth tested, unlike the markers: the strap has to disappear
+            // behind the bodywork it is attached to, not lie on top of it.
+            arcType: Cesium.ArcType.NONE
           }
         });
         return { ends, ents: [line(7, '#ffb703'), line(2.5, '#fff0b8')] };
@@ -543,7 +556,7 @@ async function init() {
     const poses = convoy.map((v) => poseBack(v.back * stretch, i, lon, lat));
     convoy.forEach((v, k) => {
       const p = poses[k];
-      const pos = Cesium.Cartesian3.fromDegrees(p[0], p[1], 0);
+      const pos = Cesium.Cartesian3.fromDegrees(p[0], p[1], LIFT_M * eff);
       v.ent.position = pos;
       v.ent.orientation = Cesium.Transforms.headingPitchRollQuaternion(
         pos, new Cesium.HeadingPitchRoll(p[2], 0, 0));
