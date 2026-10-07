@@ -52,3 +52,30 @@ so don't strip them for compatibility.
 `/data` (ingested routes) and `/cache` (tile cache) are the only stateful
 surface; everything else is derived, so losing them costs re-ingest and
 re-prefetch rather than correctness. Mount them as named volumes.
+
+### The instance on 8137 is scratch — keep it on your build
+
+Whatever is serving `127.0.0.1:8137` on a dev box is the current session's
+preview, not a deployment. Nothing supervises it and it is meant to be replaced.
+A stale container there is worse than none: it shows whoever is reviewing the
+work the build from two changes ago, and they will review *that*. If you have
+touched `web/` or the server, build and swap before asking anyone to look.
+
+Reuse the name, the port and both volumes, so the swap is invisible to whatever
+reverse proxy fronts it and the ingested routes survive:
+
+```sh
+podman build --layers -t trail-pilot:dev .
+podman rm -f trailpilot
+podman run -d --name trailpilot -p 127.0.0.1:8137:8137 \
+  -v tp-data:/data -v tp-cache:/cache trail-pilot:dev
+curl -sf localhost:8137/healthz
+```
+
+Those volumes are what make a swap cheap; recreating with fresh ones costs a
+re-ingest of every GPX and a re-prefetch of the tile cache.
+
+The behaviour knobs (`TRAILPILOT_VEHICLE`, `TRAILPILOT_SLOW_MPH`,
+`TRAILPILOT_STOP_MPH`, `TRAILPILOT_DEBUG`) are read by the server and injected
+into the page as `window.TP_CONFIG`. They are container environment, not query
+parameters — `?vehicle=subaru` on a URL does nothing on its own.
