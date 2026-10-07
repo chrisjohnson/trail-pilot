@@ -56,6 +56,7 @@
     head:     { base: '#fff3cf', rough: 0.2,  metal: 0.0, emissive: '#ffca54' },
     tail:     { base: '#ff5140', rough: 0.35, metal: 0.0, emissive: '#d41b00' },
     bedliner: { base: '#1c2027', rough: 0.95, metal: 0.0, ambient: 0.5 },
+    shell:    { base: '#141619', rough: 0.55, metal: 0.0, ambient: 0.4 },  // camper shell
     shadow:   { base: '#000000', rough: 1.0,  metal: 0.0, alpha: 0.16 },
     shadow2:  { base: '#000000', rough: 1.0,  metal: 0.0, alpha: 0.2 },
     // per-vehicle paint:
@@ -97,7 +98,7 @@
     const p = grp(g, mat), k = p.pos.length / 3;
     p.pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2], a[0],a[1],a[2], c[0],c[1],c[2], d[0],d[1],d[2]);
     for (let i = 0; i < 6; i++) p.nrm.push(n[0], n[1], n[2]);
-    p.idx.push(k,k+1,k+2, k,k+2,k+3);
+    p.idx.push(k,k+1,k+2, k,k+2,k+5);
   }
   // Oriented box at centre c, half-extents h, optional rotation in radians.
   function box(g, mat, c, h, r) {
@@ -234,6 +235,11 @@
     // windscreen and tail glass, framed
     panel(g, 'glass', 'black', [0, 1.53, -1.21], [0.73, 0.3, 0.03], { x: rad(22) }, 0.06);
     panel(g, 'glass', 'paint', [0, 1.5, 2.07], [0.6, 0.21, 0.03], { x: rad(4) }, 0.06);
+    // Cowl and tail closure. The windscreen is raked, so its lower edge swings
+    // clear of the shell front and leaves a slot between the hood top and the
+    // beltline; the tail glass has the same problem above the tailgate.
+    box(g, 'paint', [0, 1.245, -1.2], [0.73, 0.08, 0.17]);
+    box(g, 'paint', [0, 1.27, 2.05], [0.66, 0.07, 0.06]);
     // rack
     [-1, 1].forEach((s) => box(g, 'steel', [s * 0.62, TOP + 0.1, 0.44], [0.026, 0.022, 1.32]));
     [-0.4, 0.44, 1.28].forEach((z) => box(g, 'steel', [0, TOP + 0.1, z], [0.62, 0.02, 0.035]));
@@ -296,8 +302,25 @@
     box(g, 'bedliner', [0, BED_BOT + 0.02, BED_Z], [HW - 0.08, 0.03, BED_LEN / 2 - 0.05]);
     box(g, 'bedliner', [0, BED_BOT + 0.18, BED_Z - BED_LEN / 2 + 0.02], [HW - 0.08, 0.18, 0.02]);
     [-1, 1].forEach((s) => box(g, 'tail', [s * (HW - 0.08), 1.16, TAIL], [0.08, 0.14, 0.02]));
-    box(g, 'charcoal', [0, 0.64, TAIL + 0.05], [0.88, 0.12, 0.08]);
-    tubePath(g, 'steel', [[-0.7, 0.92, 0.36], [-0.7, 1.5, 0.36], [0.7, 1.5, 0.36], [0.7, 0.92, 0.36]], 0.038, 8);
+    // Bumper tucked up under the tailgate. It used to hang 10 cm below and
+    // 12 cm past it, which at close range reads as a bar lying on the ground
+    // behind the truck rather than something bolted to it.
+    box(g, 'charcoal', [0, 0.72, TAIL + 0.01], [0.88, 0.14, 0.07]);
+    [-0.62, 0.62].forEach((x) => box(g, 'charcoal', [x, 0.82, TAIL - 0.04], [0.05, 0.12, 0.05]));
+    // Camper shell. Black, squared off, a touch lower than the cab roof and
+    // flush with the bed sides so the profile still reads pickup. The sports
+    // bar it replaces lived inside this volume, so it is gone rather than
+    // hidden - and it is built from the same quad() as everything else, which
+    // is now the point: a shell is one big visible surface, so it would have
+    // shown the missing-triangle bug worse than anything on this vehicle.
+    const SH_BOT = BED_TOP, SH_TOP = 1.62, SH_HW = HW - 0.005, SH_LEN = BED_LEN / 2 - 0.04;
+    box(g, 'shell', [0, (SH_BOT + SH_TOP) / 2, BED_Z], [SH_HW, (SH_TOP - SH_BOT) / 2, SH_LEN]);
+    box(g, 'shell', [0, SH_TOP + 0.02, BED_Z - 0.04], [SH_HW - 0.03, 0.025, SH_LEN - 0.06]);
+    panel(g, 'glass', 'shell', [0, 1.44, TAIL - 0.16], [0.6, 0.16, 0.03], { x: rad(-16) }, 0.05);
+    [-1, 1].forEach((s) => {
+      box(g, 'glass', [s * (SH_HW + 0.012), 1.46, BED_Z + 0.06], [0.012, 0.085, SH_LEN - 0.34]);
+      box(g, 'charcoal', [s * (SH_HW + 0.004), SH_BOT + 0.015, BED_Z], [0.012, 0.02, SH_LEN]);
+    });
     // tow hitch under the tailgate
     box(g, 'black', [0, 0.5, TAIL - 0.02], [0.09, 0.06, 0.12]);
     cyl(g, 'steel', [0, 0.52, TAIL + 0.08], [0, 1, 0], 0.035, 0.08, 8);
@@ -330,6 +353,7 @@
     sideGlass(g, GH, 1.35, 0.17, [[-0.6, 0.52], [0.02, 0.6], [0.68, 0.5]]);
     box(g, 'paint', [0, TOP + 0.03, 0.4], [GH + 0.01, 0.03, 1.46]);
     panel(g, 'glass', 'paint', [0, 1.38, -1.09], [0.68, 0.27, 0.03], { x: rad(28) }, 0.055);
+    box(g, 'paint', [0, 1.12, -1.14], [0.7, 0.07, 0.14]);              // cowl closure
     panel(g, 'glass', 'paint', [0, 1.36, 1.9], [0.6, 0.26, 0.03], { x: rad(-16) }, 0.055);
     // wipers
     [-1, 1].forEach((s) => box(g, 'black', [s * 0.26, 1.2, -1.2], [0.018, 0.018, 0.34], { x: rad(-18), z: rad(12) }));
