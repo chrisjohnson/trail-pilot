@@ -24,10 +24,21 @@
 
   // ---------------------------------------------------------------- mat helpers
   // glTF baseColorFactor is LINEAR; the palette below is authored in sRGB hex
-  // like the rest of the app, so convert on the way in. `ambient` adds a
-  // fraction of the base colour back as emissive: the viewer lights these with
-  // a single directional source, and without it the side facing away from the
-  // light goes pure black and the vehicle loses its shape.
+  // like the rest of the app, so convert on the way in.
+  //
+  // `ambient` adds a fraction of the base colour back as emissive, and it is
+  // doing more work than a fill light should. Cesium lights these models with a
+  // fixed ambient of roughly 0.36 x albedo and nothing else: scene.light was
+  // measured at 1.25, 0 and 2.2, as a DirectionalLight and as a SunLight, and
+  // scene.sun was measured moved to three different positions, and the vehicle
+  // pixels did not change by a single unit in any of them. So the palette has
+  // to carry the colour itself. Without the emissive floor a red Jeep came out
+  // at rgb(95,31,24) - a muddy maroon - and the glossy specular on top of that
+  // pushed the flanks pink, which is what read as washed out.
+  //
+  // So: paint is rough enough not to sheen, and carries enough emissive that
+  // the body reads as its own colour everywhere. What shading is left comes
+  // from bakeShade() rather than from the scene.
   function srgb(c) { return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
   function hex(h) {
     const n = parseInt(h.replace('#', ''), 16);
@@ -39,18 +50,18 @@
     rubber:   { base: '#1a1d22', rough: 0.85, metal: 0.0, ambient: 0.45 },
     black:    { base: '#15181d', rough: 0.55, metal: 0.1, ambient: 0.4 },
     charcoal: { base: '#2b3038', rough: 0.6,  metal: 0.1, ambient: 0.4 },
-    steel:    { base: '#9aa3ad', rough: 0.35, metal: 0.85, ambient: 0.18 }, // tube flares, rack, bar
-    chrome:   { base: '#cfd6de', rough: 0.18, metal: 0.95, ambient: 0.16 }, // grille bars
-    glass:    { base: '#22414f', rough: 0.34, metal: 0.0, ambient: 0.55 },  // dark, glossy, not a void
+    steel:    { base: '#9aa3ad', rough: 0.35, metal: 0.85, ambient: 0.30 }, // tube flares, rack, bar
+    chrome:   { base: '#cfd6de', rough: 0.18, metal: 0.95, ambient: 0.28 }, // grille bars
+    glass:    { base: '#1d3a47', rough: 0.34, metal: 0.0, ambient: 0.42 },  // dark, glossy, not a void
     head:     { base: '#fff3cf', rough: 0.2,  metal: 0.0, emissive: '#ffca54' },
     tail:     { base: '#ff5140', rough: 0.35, metal: 0.0, emissive: '#d41b00' },
     bedliner: { base: '#1c2027', rough: 0.95, metal: 0.0, ambient: 0.5 },
     shadow:   { base: '#000000', rough: 1.0,  metal: 0.0, alpha: 0.16 },
     shadow2:  { base: '#000000', rough: 1.0,  metal: 0.0, alpha: 0.2 },
     // per-vehicle paint:
-    paint:    { base: '#d0312d', rough: 0.3,  metal: 0.0, ambient: 0.1 },
-    paintHi:  { base: '#e8473f', rough: 0.28, metal: 0.0, ambient: 0.1 },
-    paintLo:  { base: '#8f201d', rough: 0.45, metal: 0.0, ambient: 0.1 },
+    paint:    { base: '#cc1f16', rough: 0.62, metal: 0.0, ambient: 0.38 },
+    paintHi:  { base: '#e33a2c', rough: 0.58, metal: 0.0, ambient: 0.38 },
+    paintLo:  { base: '#8d1a13', rough: 0.7,  metal: 0.0, ambient: 0.34 },
   };
 
   // ------------------------------------------------------------------- vec math
@@ -370,6 +381,36 @@
     });
   }
 
+  // Cesium gives these models a fixed ambient and no direction, so the shading
+  // that makes a box read as a bonnet, a roof and a flank has to be in the
+  // geometry. bakeShade writes glTF COLOR_0, which the spec multiplies into
+  // baseColorFactor: a stylised sky from above plus a key from up and to one
+  // side, evaluated in the vehicle's own frame. Being in the vehicle's frame is
+  // deliberate - every vehicle in the convoy is then lit the same way relative
+  // to its body, and orbiting the camera does not leave one vehicle in shadow.
+  // Clamped at 1: above that the base colour clips towards white, which is the
+  // pink-tinged wash this whole pass exists to remove.
+  const SHADE_KEY = norm([0.34, 0.80, 0.50]);   // forward, up, to one side
+  function bakeShade(g) {
+    g.pris.forEach((prim, name) => {
+      const m = MAT[name];
+      // Emissive parts (lamps) and the ground shadow keep their own colour.
+      const flat = !m || m.emissive || m.alpha !== undefined;
+      const col = new Array(prim.nrm.length);
+      for (let i = 0; i < prim.nrm.length; i += 3) {
+        let s = 1;
+        if (!flat) {
+          const n = [prim.nrm[i], prim.nrm[i + 1], prim.nrm[i + 2]];
+          const up = Math.max(0, n[1]);
+          const key = Math.max(0, n[0] * SHADE_KEY[0] + n[1] * SHADE_KEY[1] + n[2] * SHADE_KEY[2]);
+          s = Math.min(1, 0.52 + 0.30 * up + 0.20 * key);
+        }
+        col[i] = col[i + 1] = col[i + 2] = s;
+      }
+      prim.col = col;
+    });
+  }
+
   function maxOf(a) { let m = 0; for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
   function gltfJson(g, kind) {
     const chunks = [], views = [], accessors = [], primitives = [];
@@ -418,7 +459,8 @@
                        min: 0, max: prim.idx.length ? maxOf(prim.idx) : 0 });
       const indices = accessors.length - 1;
       primitives.push({
-        attributes: { POSITION: f32(prim.pos, 3), NORMAL: f32(prim.nrm, 3) },
+        attributes: { POSITION: f32(prim.pos, 3), NORMAL: f32(prim.nrm, 3),
+                      COLOR_0: f32(prim.col, 3) },
         material: names.indexOf(name), mode: 4, indices: indices,
       });
     });
@@ -440,7 +482,8 @@
     if (cache.has(kind)) return cache.get(kind);
     const g = new Geo();
     DIMS[kind] = BUILDERS[kind](g);
-    reorient(g);
+    reorient(g);        // into the frame Cesium treats as the heading
+    bakeShade(g);       // reads the reoriented normals, so it has to come after
     const json = gltfJson(g, kind);
     // A blob: URL keeps a real content-type on the response, which is how
     // Cesium decides the payload is glTF-json rather than a binary glb.
