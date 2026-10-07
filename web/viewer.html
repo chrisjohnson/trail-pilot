@@ -413,38 +413,21 @@ async function init() {
   const TOW_M = 3.4;        // bumper-to-bumper gap
   const VEHICLE_SCALE = 1.1; // slightly heroic, as the flat icon used to be
   // A true-scale 4.5 m vehicle is a speck by the time you can see a mile of
-  // trail, so the models carry a screen-space floor like the old icon did.
-  const MIN_PX = 96;        // never smaller than this on screen
-  const MAX_SCALE = 40;     // how far that floor is allowed to inflate them
-  // Far above, even the pixel-floored models are a speck, so the convoy swaps
-  // to a flat screen-space glyph: the same vehicles from above, nose up-track.
-  // Rotated by (track heading − camera heading), so the string keeps pointing
-  // down the trail while the camera orbits.
-  const BB_ALT = 900;                       // metres: models below, glyph above
-  const PAINT_CSS = { jeep: '#d0312d', taco: '#2456d6', forester: '#1f8f85' };
-  const glyphCache = {};
-  const glyph = (kind) => {
-    if (glyphCache[kind]) return glyphCache[kind];
-    const S = 64, c = document.createElement('canvas');
-    c.width = S; c.height = S;
-    const x = c.getContext('2d'), w = 30, y0 = 5, l = 54;
-    x.beginPath();                            // nose at the top, tail at the bottom
-    x.moveTo(-w / 2, y0 + 18);
-    x.quadraticCurveTo(-w / 2, y0 + 1, 0, y0);
-    x.quadraticCurveTo(w / 2, y0 + 1, w / 2, y0 + 18);
-    x.lineTo(w / 2, y0 + l - 7);
-    x.quadraticCurveTo(w / 2, y0 + l, w / 2 - 7, y0 + l);
-    x.lineTo(-w / 2 + 7, y0 + l);
-    x.quadraticCurveTo(-w / 2, y0 + l, -w / 2, y0 + l - 7);
-    x.closePath();
-    x.fillStyle = PAINT_CSS[kind] || '#d0312d';
-    x.fill();
-    x.lineWidth = 4; x.strokeStyle = '#f7f7f7'; x.stroke();
-    x.fillStyle = '#15181d';                  // windscreen + rear window
-    x.fillRect(-w / 2 + 5, y0 + 15, w - 10, 7);
-    x.fillRect(-w / 2 + 6, y0 + l - 16, w - 12, 5);
-    return (glyphCache[kind] = c.toDataURL('image/png'));
-  };
+  // trail, so the models carry a screen-space floor like the old icon did. The
+  // numbers are set by what the map looks like in practice: at the zoom where
+  // you can read a contour label (~3 km across) the floor is what makes the
+  // difference between a vehicle you can identify and two pixels, and the scale
+  // cap is loose enough that the floor still holds out to ~5 km and only fades
+  // gradually beyond it. Nothing else takes over up there — see below.
+  const MIN_PX = 150;       // never smaller than this on screen
+  const MAX_SCALE = 120;    // how far that floor is allowed to inflate them
+  // There used to be a flat top-down billboard that took over above ~900 m, on
+  // the theory that a pixel-floored model is a speck from up there. It was the
+  // wrong call: that is the zoom where most of the map gets looked at, and the
+  // swap turned three identifiable vehicles into two coloured pills — the
+  // "something else entirely" the change was praised for not being. The floor
+  // and the scale cap above now carry every zoom, fading only as they run out
+  // of cap, so the convoy is the same object from 20 m to the whole route.
   const convoy = [];
   {
     let back = 0;
@@ -456,22 +439,15 @@ async function init() {
         model: {
           uri: TrailPilotVehicles.uri(kind),
           scale: VEHICLE_SCALE,
-          // A pixel floor keeps the vehicles legible from a low pass to well
-          // above the treeline; maximumScale stops it growing without bound
-          // when the floor takes over (see the glyph for the rest of the way).
+          // Screen-space floor, so the convoy is identifiable from a low pass to
+          // the whole-route view; maximumScale is the only thing that lets it
+          // fade again, and it fades gradually rather than swapping to a marker.
           minimumPixelSize: MIN_PX,
           maximumScale: MAX_SCALE,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         }
       });
-      const bb = viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 2),
-        billboard: {
-          image: glyph(kind), width: 34, height: 38, rotation: 0,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY, show: false
-        }
-      });
-      convoy.push({ kind, back, ent, model: ent.model, bb });
+      convoy.push({ kind, back, ent, model: ent.model });
     });
   }
 
@@ -526,8 +502,6 @@ async function init() {
   const setConvoy = (i, lon, lat) => {
     lastConvoy = [i, lon, lat];
     convoyPose = [lon, lat, headingAt(i)];
-    const alt = viewer.camera.positionCartographic.height;
-    const flatIcon = alt > BB_ALT;
     const stretch = floorInflation();
     lastStretch = stretch;
     for (const v of convoy) {
@@ -536,31 +510,12 @@ async function init() {
       v.ent.position = pos;
       v.ent.orientation = Cesium.Transforms.headingPitchRollQuaternion(
         pos, new Cesium.HeadingPitchRoll(p[2], 0, 0));
-      v.model.show = !flatIcon;
-      v.bb.billboard.show = flatIcon;   // the graphics flag wins over Entity.show
-      if (flatIcon) {
-        v.bb.position = pos;
-        let rot = p[2] - viewer.camera.heading;
-        rot = ((rot % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
-        v.bb.billboard.rotation = isFinite(rot) ? rot : 0;
-      }
     }
   };
-  // Orbiting re-aims the glyphs without moving anything along the track, and
-  // zooming crosses the models/glyph boundary — so sync on every rendered
-  // frame while the glyph is up, and once per crossing on the way back down.
-  let lastFlatIcon = null;
   viewer.scene.preRender.addEventListener(() => {
-    const high = viewer.camera.positionCartographic.height > BB_ALT;
-    // The models' pixel floor is re-applied by Cesium on every frame, so the
-    // string spacing has to follow it or the convoy drifts apart and piles up as
-    // you zoom. Re-pose when the glyph is up (it also needs the camera heading)
-    // and whenever the inflation factor has visibly moved.
-    const k = floorInflation();
-    if (high || high !== lastFlatIcon || Math.abs(k / lastStretch - 1) > 0.02) {
-      lastFlatIcon = high;
-      setConvoy.apply(null, lastConvoy);
-    }
+    // Cesium re-applies the pixel floor every frame, so the string spacing has
+    // to follow it or the convoy drifts apart and piles up as you zoom.
+    if (Math.abs(floorInflation() / lastStretch - 1) > 0.02) setConvoy.apply(null, lastConvoy);
   });
   setConvoy(0, flat[0], flat[1]);
   window.__tp = { viewer, convoy, pose: () => convoyPose, stretch: () => lastStretch,
