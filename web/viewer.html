@@ -421,6 +421,7 @@ async function init() {
   // gradually beyond it. Nothing else takes over up there — see below.
   const MIN_PX = 150;       // never smaller than this on screen
   const MAX_SCALE = 120;    // how far that floor is allowed to inflate them
+  const ROPE_M = 0.45;      // authored bumper height, so the strap meets it
   // There used to be a flat top-down billboard that took over above ~900 m, on
   // the theory that a pixel-floored model is a speck from up there. It was the
   // wrong call: that is the zoom where most of the map gets looked at, and the
@@ -447,7 +448,31 @@ async function init() {
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         }
       });
-      convoy.push({ kind, back, ent, model: ent.model });
+      // A strap between the bumpers: straight, yellow, unapologetically dumb
+      // about physics. Two stacked polylines because outlineWidth is silently
+      // ignored on most platforms, and ordered wide-then-narrow on purpose: two
+      // coplanar lines have no defined draw order here (a dark casing under a
+      // yellow core came out dashed, the casing winning in patches), so the
+      // arrangement has to degrade gracefully when the narrow one loses. A
+      // yellow strap that drops its sheen is still a yellow strap.
+      // Positions come from a CallbackProperty rather than being assigned on
+      // each re-pose. Assigning a fresh array makes Cesium treat the polyline as
+      // static and rebuild its geometry asynchronously, so the strap vanished
+      // for a beat on every zoom step — and in requestRenderMode that beat could
+      // be forever. A dynamic polyline updates the primitive in place.
+      const strap = convoy.length === 0 ? null : (() => {
+        const ends = [new Cesium.Cartesian3(), new Cesium.Cartesian3()];
+        const get = () => ends;
+        const line = (width, css) => viewer.entities.add({
+          polyline: {
+            positions: new Cesium.CallbackProperty(get, false), width,
+            material: Cesium.Color.fromCssColorString(css),
+            arcType: Cesium.ArcType.NONE, disableDepthTestDistance: Number.POSITIVE_INFINITY
+          }
+        });
+        return { ends, ents: [line(7, '#ffb703'), line(2.5, '#fff0b8')] };
+      })();
+      convoy.push({ kind, back, ent, model: ent.model, strap });
     });
   }
 
@@ -499,51 +524,69 @@ async function init() {
     const px = metres * h / (2 * range * Math.tan(fovy / 2));
     return px > 0 ? Math.min(MAX_SCALE, Math.max(1, MIN_PX / px)) : 1;
   };
+  // metres along a heading, for the strap's endpoints. Same approximation
+  // poseBack uses: a few hundred metres of flat ground does not need a geodesic.
+  const ahead = (lon, lat, hd, m) => [
+    lon + m * Math.sin(hd) / (111320 * Math.cos(toRad(lat))),
+    lat + m * Math.cos(hd) / 111320
+  ];
+
   const setConvoy = (i, lon, lat) => {
     lastConvoy = [i, lon, lat];
     convoyPose = [lon, lat, headingAt(i)];
     const stretch = floorInflation();
     lastStretch = stretch;
-    for (const v of convoy) {
-      const p = poseBack(v.back * stretch, i, lon, lat);
+    // The scale Cesium is actually applying, so the strap ends land on the
+    // bumpers of the inflated models rather than on the ones they were authored
+    // at. maximumScale is an absolute cap, hence the min.
+    const eff = Math.min(VEHICLE_SCALE * stretch, MAX_SCALE);
+    const poses = convoy.map((v) => poseBack(v.back * stretch, i, lon, lat));
+    convoy.forEach((v, k) => {
+      const p = poses[k];
       const pos = Cesium.Cartesian3.fromDegrees(p[0], p[1], 0);
       v.ent.position = pos;
       v.ent.orientation = Cesium.Transforms.headingPitchRollQuaternion(
         pos, new Cesium.HeadingPitchRoll(p[2], 0, 0));
-    }
+      if (!v.strap) return;
+      // Anchored on the two centres, not on the bumpers. The models occlude the
+      // strap, so the visible run starts and stops exactly where the bodywork
+      // does — which is what a strap looks like — and none of it depends on
+      // guessing the scale Cesium settled on. Bumper-anchored, the same line
+      // left a gap whenever that guess ran long, and the guess is a bounding
+      // sphere Cesium sizes against, not a length we can read off the geometry.
+      const lead = poses[k - 1];
+      Cesium.Cartesian3.fromDegrees(lead[0], lead[1], ROPE_M * eff, undefined, v.strap.ends[0]);
+      Cesium.Cartesian3.fromDegrees(p[0], p[1], ROPE_M * eff, undefined, v.strap.ends[1]);
+    });
   };
   viewer.scene.preRender.addEventListener(() => {
     // Cesium re-applies the pixel floor every frame, so the string spacing has
     // to follow it or the convoy drifts apart and piles up as you zoom.
-    if (Math.abs(floorInflation() / lastStretch - 1) > 0.02) setConvoy.apply(null, lastConvoy);
+    if (Math.abs(floorInflation() / lastStretch - 1) > 0.02) {
+      setConvoy.apply(null, lastConvoy);
+      // Ask for another frame. A model reads its position as a uniform at draw
+      // time, so re-posing during preRender shows up immediately; a polyline
+      // bakes its geometry in the pass that runs *before* preRender, so the new
+      // endpoints are a frame late - and in requestRenderMode that frame never
+      // arrives, which is how the tow strap ended up invisible at exactly the
+      // zoom where the camera had just moved it. The 2% test above makes this
+      // converge rather than loop.
+      viewer.scene.requestRender();
+    }
   });
   setConvoy(0, flat[0], flat[1]);
   window.__tp = { viewer, convoy, pose: () => convoyPose, stretch: () => lastStretch,
                   inflation: () => floorInflation() }; // debug/test hook
 
-  // A key light that follows the camera instead of the sun: on a flat globe at
-  // an arbitrary orbit, a real-sun light leaves the convoy in silhouette half
-  // the time, and shape-from-shading is what makes a vehicle read as a vehicle.
-  // Aimed high and to one side of the view axis rather than down it: with the
-  // light along the eye, every camera-facing face gets the same flat value and
-  // the vehicle loses its form.
-  const KEY_LIGHT = new Cesium.DirectionalLight({
-    direction: new Cesium.Cartesian3(0.42, -0.62, -0.66),
-    intensity: 1.25
-  });
-  viewer.scene.light = KEY_LIGHT;
+  // Models in this viewer are lit by a fixed ambient and nothing else, so the
+  // palette in vehicles.js carries their colour and bakeShade() carries their
+  // form. This used to install a camera-relative DirectionalLight as a key, and
+  // rotate it with the camera every frame. It did nothing: scene.light measured
+  // at 1.25, 0 and 2.2, as a DirectionalLight and as a SunLight, and scene.sun
+  // moved to three different positions, left the vehicle pixels identical in
+  // every case. dynamicLighting stays on because it does light the globe, which
+  // is where the terrain shading comes from.
   viewer.scene.dynamicLighting = true;
-  {
-    const dirCam = new Cesium.Cartesian3(0.42, -0.62, -0.66);
-    const inv = new Cesium.Matrix4(), dirW = new Cesium.Cartesian3();
-    viewer.scene.preRender.addEventListener(() => {
-      const vt = viewer.camera.viewTransform;
-      if (!vt) return;
-      Cesium.Matrix4.transpose(vt, inv);
-      Cesium.Matrix4.multiplyByPointAsVector(inv, dirCam, dirW);
-      KEY_LIGHT.direction = Cesium.Cartesian3.normalize(dirW, dirW);
-    });
-  }
 
   const markers = [];
   const pushEntity = (m) => {
