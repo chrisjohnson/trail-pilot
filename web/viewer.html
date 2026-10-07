@@ -7,6 +7,7 @@
 <title>Friday Morning Hard Trail Run — 3D Route</title>
 <link href="/cdn/unpkg.com/cesium@1.125.0/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
 <script src="/cdn/unpkg.com/cesium@1.125.0/Build/Cesium/Cesium.js"></script>
+<script src="/vehicles.js"></script>
 <style>
   :root {
     --panel: rgba(14,20,38,0.82); --line: #FF6B3B; --break: #FFB347; --third: #FFD23F;
@@ -393,206 +394,160 @@ async function init() {
       outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,0.55)'), outlineWidth: 1.5
     }
   });
-  // Runner icon: a top-down vehicle convoy, selected by TRAILPILOT_VEHICLE
-  // (via window.TP_CONFIG.vehicle). Subaru = teal 2001 Forester tows the JKU
-  // which tows the blue Tacoma; Jeep = red JKU (37" mud tires, roof rack, metal tube
-  // fenders) tows the Tacoma; Toyota = the blue Tacoma, being towed.
-  const VEH = (kind) => {
-    const tires = (x0, x1, y0, y1, w, h, tread) => [
-      [x0, y0], [x1, y0], [x0, y1], [x1, y1]
-    ].map(([tx, ty]) =>
-      "<rect x='" + tx + "' y='" + ty + "' width='" + w + "' height='" + h + "' rx='2' fill='#0e1013'/>" +
-      "<line x1='" + (tx + w/2) + "' y1='" + (ty + 2) + "' x2='" + (tx + w/2) + "' y2='" + (ty + h - 2) + "' stroke='#3a3f47' stroke-width='1.3' stroke-dasharray='" + tread + "'/>"
-    ).join('');
-    // red JKU 4-door: black flat hood, clove fenders, 4 doors (B-pillar seams +
-    // handles on both sides), hardtop with crossbars. Front (hood) is at top.
-    if (kind === 'jeep')
-      return tires(0, 18, 3, 19, 6, 10, '1.5 1.3') +
-      "<rect x='3.5' y='1' width='17' height='30' rx='3.5' fill='#d0312d' stroke='#f7f7f7' stroke-width='1.2'/>" +
-      "<path d='M1.5 6.2 a4.8 4.8 0 0 1 4.4 -3.4' fill='none' stroke='#a7adb6' stroke-width='2.2' stroke-linecap='round'/>" +
-      "<path d='M22.5 6.2 a4.8 4.8 0 0 0 -4.4 -3.4' fill='none' stroke='#a7adb6' stroke-width='2.2' stroke-linecap='round'/>" +
-      "<path d='M1.5 25.8 a4.8 4.8 0 0 0 4.4 3.4' fill='none' stroke='#a7adb6' stroke-width='2.2' stroke-linecap='round'/>" +
-      "<path d='M22.5 25.8 a4.8 4.8 0 0 1 -4.4 3.4' fill='none' stroke='#a7adb6' stroke-width='2.2' stroke-linecap='round'/>" +
-      "<rect x='7' y='1.5' width='10' height='2.2' rx='0.5' fill='#17191d'/>" +
-      "<line x1='9.5' y1='1.8' x2='9.5' y2='3.4' stroke='#454b55' stroke-width='0.9'/>" +
-      "<line x1='12' y1='1.8' x2='12' y2='3.4' stroke='#454b55' stroke-width='0.9'/>" +
-      "<line x1='14.5' y1='1.8' x2='14.5' y2='3.4' stroke='#454b55' stroke-width='0.9'/>" +
-      "<circle cx='5.5' cy='2.6' r='1.5' fill='#ffe9a8' stroke='#17191d' stroke-width='0.7'/>" +
-      "<circle cx='20.5' cy='2.6' r='1.5' fill='#ffe9a8' stroke='#17191d' stroke-width='0.7'/>" +
-      "<rect x='5' y='4.3' width='14' height='6.8' rx='1' fill='#15181d'/>" +
-      "<line x1='8.5' y1='6.9' x2='17.5' y2='6.9' stroke='#2c3e50' stroke-width='1'/>" +
-      "<line x1='8.5' y1='8.7' x2='17.5' y2='8.7' stroke='#2c3e50' stroke-width='1'/>" +
-      "<rect x='5.7' y='11.5' width='12.6' height='3.1' rx='0.6' fill='#4a5d70'/>" +
-      "<line x1='7.5' y1='14' x2='11.5' y2='12' stroke='#8ba0b5' stroke-width='0.7'/>" +
-      "<rect x='6' y='15' width='12' height='10.6' rx='1' fill='#262b33'/>" +
-      "<line x1='12' y1='15.6' x2='12' y2='25' stroke='#39404c' stroke-width='1.2'/>" +
-      "<line x1='6.8' y1='17.8' x2='17.2' y2='17.8' stroke='#a7adb6' stroke-width='1.1'/>" +
-      "<line x1='6.8' y1='22.2' x2='17.2' y2='22.2' stroke='#a7adb6' stroke-width='1.1'/>" +
-      "<line x1='5.2' y1='12.5' x2='5.2' y2='25' stroke='#8f201d' stroke-width='1.1'/>" +
-      "<line x1='18.8' y1='12.5' x2='18.8' y2='25' stroke='#8f201d' stroke-width='1.1'/>" +
-      "<rect x='3.8' y='13.4' width='1.3' height='2.6' rx='0.6' fill='#ffd9d4'/>" +
-      "<rect x='3.8' y='18.6' width='1.3' height='2.6' rx='0.6' fill='#ffd9d4'/>" +
-      "<rect x='22.9' y='13.4' width='1.3' height='2.6' rx='0.6' fill='#ffd9d4'/>" +
-      "<rect x='22.9' y='18.6' width='1.3' height='2.6' rx='0.6' fill='#ffd9d4'/>" +
-      "<rect x='5.7' y='26' width='12.6' height='2' rx='0.5' fill='#4a5d70'/>" +
-      "<rect x='4.5' y='28.9' width='15' height='1.7' rx='0.8' fill='#17191d'/>" +
-      "<rect x='11.2' y='30.2' width='3.6' height='1.3' rx='0.5' fill='#454b55'/>";
-    // blue Tacoma pickup: long hood, cab, and an OPEN BED (the pickup tell).
-    if (kind === 'taco')
-      return tires(0.5, 17.5, 3.5, 19, 6, 9.5, '1.4 1.2') +
-      "<rect x='3.5' y='1' width='17' height='30' rx='3' fill='#2456d6' stroke='#f7f7f7' stroke-width='1.2'/>" +
-      "<rect x='7' y='1.5' width='10' height='2' rx='0.5' fill='#17191d'/>" +
-      "<line x1='9.5' y1='1.8' x2='9.5' y2='3.2' stroke='#454b55' stroke-width='0.9'/>" +
-      "<line x1='12' y1='1.8' x2='12' y2='3.2' stroke='#454b55' stroke-width='0.9'/>" +
-      "<line x1='14.5' y1='1.8' x2='14.5' y2='3.2' stroke='#454b55' stroke-width='0.9'/>" +
-      "<circle cx='5.5' cy='2.6' r='1.4' fill='#ffe9a8' stroke='#17191d' stroke-width='0.7'/>" +
-      "<circle cx='20.5' cy='2.6' r='1.4' fill='#ffe9a8' stroke='#17191d' stroke-width='0.7'/>" +
-      "<rect x='5' y='4' width='14' height='7.6' rx='1.5' fill='#1c3f9e'/>" +
-      "<line x1='12' y1='4.8' x2='12' y2='11' stroke='#16307a' stroke-width='1.1'/>" +
-      "<rect x='5.8' y='12' width='12.4' height='2.9' rx='0.6' fill='#4a5d70'/>" +
-      "<line x1='7.6' y1='14.4' x2='11.4' y2='12.6' stroke='#8ba0b5' stroke-width='0.7'/>" +
-      "<rect x='6' y='15.3' width='12' height='5.4' rx='1' fill='#2f63e8'/>" +
-      "<line x1='5.2' y1='13' x2='5.2' y2='21.8' stroke='#1a3fa8' stroke-width='1.1'/>" +
-      "<line x1='18.8' y1='13' x2='18.8' y2='21.8' stroke='#1a3fa8' stroke-width='1.1'/>" +
-      "<rect x='3.8' y='13.6' width='1.3' height='2.6' rx='0.6' fill='#cfe0ff'/>" +
-      "<rect x='22.9' y='13.6' width='1.3' height='2.6' rx='0.6' fill='#cfe0ff'/>" +
-      "<rect x='6.4' y='20.4' width='11.2' height='1.6' rx='0.5' fill='#4a5d70'/>" +
-      "<rect x='5' y='22.2' width='14' height='7' rx='1' fill='#171b22'/>" +
-      "<line x1='5.8' y1='24.6' x2='18.2' y2='24.6' stroke='#262d3a' stroke-width='1'/>" +
-      "<line x1='5.8' y1='27' x2='18.2' y2='27' stroke='#262d3a' stroke-width='1'/>" +
-      "<line x1='5' y1='29.4' x2='19' y2='29.4' stroke='#10131a' stroke-width='1.2'/>" +
-      "<rect x='11' y='28.9' width='4' height='0.9' rx='0.4' fill='#a7adb6'/>" +
-      "<rect x='4.5' y='29.8' width='15' height='1.5' rx='0.7' fill='#17191d'/>";
-    // teal ~2001 Forester wagon with roof rails
-    return tires(1, 17, 3, 20, 6, 10, '1.4 1.2') +
-      "<rect x='3' y='0.5' width='18' height='31' rx='4.5' fill='#1f8f85' stroke='#f7f7f7' stroke-width='1.2'/>" +
-      "<circle cx='5' cy='2.6' r='1.3' fill='#ffe9a8' stroke='#17191d' stroke-width='0.7'/>" +
-      "<circle cx='21' cy='2.6' r='1.3' fill='#ffe9a8' stroke='#17191d' stroke-width='0.7'/>" +
-      "<rect x='4.5' y='1.5' width='15' height='8' rx='2' fill='#166b64'/>" +
-      "<rect x='5' y='10.5' width='14' height='3.6' rx='1' fill='#4a5d70'/>" +
-      "<rect x='5' y='14.6' width='14' height='12' rx='1' fill='#2ba396'/>" +
-      "<line x1='6.4' y1='15.2' x2='6.4' y2='26.2' stroke='#0d4f49' stroke-width='1.4'/>" +
-      "<line x1='17.6' y1='15.2' x2='17.6' y2='26.2' stroke='#0d4f49' stroke-width='1.4'/>" +
-      "<rect x='5.5' y='26.8' width='13' height='2' rx='0.5' fill='#4a5d70'/>" +
-      "<rect x='4.5' y='29.2' width='15' height='1.6' rx='0.8' fill='#17191d'/>";
-  };
-
+  // ---- The convoy: 3D vehicles that drive the trail -----------------------
+  // Selected by TRAILPILOT_VEHICLE (via window.TP_CONFIG.vehicle):
+  //   subaru = teal 2001 Forester tows the JKU, which tows the blue Tacoma
+  //   jeep   = red JKU (37" mud tyres, tube flares, roof rack, snorkel) tows
+  //            the Tacoma
+  //   toyota = the blue Tacoma on its own
+  // The models are generated as glTF by vehicles.js, which authors them in
+  // glTF's frame: +Y up, nose at -Z, wheels resting on y=0 — the flat
+  // ellipsoid this viewer draws. So heading is the only rotation needed, and
+  // Cesium.Transforms.headingPitchRollQuaternion(pos, HeadingPitchRoll(h,0,0))
+  // puts rubber on the ground with the nose down-track.
+  // The lead vehicle sits at the scrub position; every towed vehicle walks
+  // back along the RECORDED path, so the string bends into corners instead of
+  // trailing the leader in a rigid line.
   const CONVOYS = { subaru: ['forester', 'jeep', 'taco'], jeep: ['jeep', 'taco'], toyota: ['taco'] };
   const runKind = CONVOYS[String(TP.vehicle)] ? String(TP.vehicle) : 'jeep';
+  const TOW_M = 3.4;        // bumper-to-bumper gap
+  const VEHICLE_SCALE = 1.1; // slightly heroic, as the flat icon used to be
+  // Far above, even the pixel-floored models are a speck, so the convoy swaps
+  // to a flat screen-space glyph: the same vehicles from above, nose up-track.
+  // Rotated by (track heading − camera heading), so the string keeps pointing
+  // down the trail while the camera orbits.
+  const BB_ALT = 900;                       // metres: models below, glyph above
+  const PAINT_CSS = { jeep: '#d0312d', taco: '#2456d6', forester: '#1f8f85' };
+  const glyphCache = {};
+  const glyph = (kind) => {
+    if (glyphCache[kind]) return glyphCache[kind];
+    const S = 64, c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const x = c.getContext('2d'), w = 30, y0 = 5, l = 54;
+    x.beginPath();                            // nose at the top, tail at the bottom
+    x.moveTo(-w / 2, y0 + 18);
+    x.quadraticCurveTo(-w / 2, y0 + 1, 0, y0);
+    x.quadraticCurveTo(w / 2, y0 + 1, w / 2, y0 + 18);
+    x.lineTo(w / 2, y0 + l - 7);
+    x.quadraticCurveTo(w / 2, y0 + l, w / 2 - 7, y0 + l);
+    x.lineTo(-w / 2 + 7, y0 + l);
+    x.quadraticCurveTo(-w / 2, y0 + l, -w / 2, y0 + l - 7);
+    x.closePath();
+    x.fillStyle = PAINT_CSS[kind] || '#d0312d';
+    x.fill();
+    x.lineWidth = 4; x.strokeStyle = '#f7f7f7'; x.stroke();
+    x.fillStyle = '#15181d';                  // windscreen + rear window
+    x.fillRect(-w / 2 + 5, y0 + 15, w - 10, 7);
+    x.fillRect(-w / 2 + 6, y0 + l - 16, w - 12, 5);
+    return (glyphCache[kind] = c.toDataURL('image/png'));
+  };
+  const convoy = [];
   {
-    const list = CONVOYS[runKind], VW = 28, VH = 32, GAP = 8;
-    const VHt = list.length * VH + (list.length - 1) * GAP + 4;
-    // Inner content: the convoy strip, top-down, front (lead vehicle) at top.
-    let inner = "";
-    list.forEach((kind, i) => {
-      const y = 2 + i * (VH + GAP);
-      if (i > 0) inner += "<line x1='14' y1='" + (y - GAP) + "' x2='14' y2='" + y + "' stroke='#111418' stroke-width='2.5'/>"; // tow line
-      inner += "<g transform='translate(2," + y + ")'>" + VEH(kind) + "</g>";
+    let back = 0;
+    (CONVOYS[runKind]).forEach((kind, i) => {
+      if (i > 0) { const prev = TrailPilotVehicles.dims(convoy[i - 1].kind); back += prev.front + prev.back + TOW_M; }
+      const ent = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
+        orientation: Cesium.Quaternion.IDENTITY,
+        model: {
+          uri: TrailPilotVehicles.uri(kind),
+          scale: VEHICLE_SCALE,
+          // A pixel floor keeps the vehicles legible from a low pass to well
+          // above the treeline; maximumScale stops it growing without bound
+          // when the floor takes over (see the glyph for the rest of the way).
+          minimumPixelSize: 42,
+          maximumScale: 10,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        }
+      });
+      const bb = viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 2),
+        billboard: {
+          image: glyph(kind), width: 26, height: 28, rotation: 0,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY, show: false
+        }
+      });
+      convoy.push({ kind, back, ent, model: ent.model, bb });
     });
-    // The quad is an axis-aligned SQUARE (so Cesium's bounding-box UV mapping
-    // is the identity), and the heading is baked into the image itself: the
-    // square canvas carries the centered convoy, rotated so its front points
-    // down-track. SVG rotate() is clockwise in screen space, which matches
-    // compass heading (clockwise from north).
-    const S = VHt; // square canvas side (== convoy length)
-    const runSVGrot = (deg) => {
-      const d = (deg || 0) % 360;
-      const RES = 3; // SVG is vector; rasterize 3x so fine details (doors, bed) stay crisp
-      let s = "<svg xmlns='http://www.w3.org/2000/svg' width='" + S * RES + "' height='" + S * RES + "' viewBox='0 0 " + S + " " + S + "'>" +
-        "<g transform='rotate(" + d + " " + S/2 + " " + S/2 + ")'>" +
-        "<g transform='translate(" + (S - VW) / 2 + ",0)'>" + inner + "</g></g></svg>";
-      return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(s);
-    };
-    window.__runSVG = runSVGrot(0); // for debugging
-    const runW = 36, runH = Math.round(36 * VHt / VW);
-    window.__runnerBillboard = { runSVGrot, runSVG: runSVGrot(0), runW, runH };
   }
-  // The convoy lies FLAT on the ground: an axis-aligned square quad just a
-  // couple of meters above the ellipsoid (the scene ground — hillshaded topo
-  // imagery, no terrain mesh), carrying the convoy SVG as its image material.
-  // The quad stays axis-aligned so Cesium's bounding-box UV mapping is the
-  // identity (image top = north); the heading is baked into the image itself
-  // (rotated around the canvas center) so the convoy front points down-track
-  // at any heading without clipping. Cesium 1.125 notes: ImageMaterialProperty
-  // takes an options object ({image, transparent}) — the old (image, options)
-  // form silently produced a white, imageless material. The glow point stays
-  // as the far-zoom locator (a real-size quad is sub-pixel at overview range).
-  const RUN_W_M = 4; // convoy width in meters (slightly heroic scale)
-  const RUN_L_M = RUN_W_M * window.__runnerBillboard.runH / window.__runnerBillboard.runW;
-  const RUN_S_M = RUN_L_M + 0.6; // square side: fits the convoy at any rotation
-  const RUN_H_M = 1.5; // meters above the ellipsoid ground
-  const toRad = x => x * Math.PI / 180;
-  const runMat = new Cesium.ImageMaterialProperty({ image: window.__runnerBillboard.runSVG, transparent: true });
-  const runnerPoly = viewer.entities.add({
-    polygon: {
-      hierarchy: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
-      height: RUN_H_M,
-      material: runMat
-    }
-  });
-  // Position the quad at route index i and point the convoy down-track
-  // (compass heading over a small window, baked into the image).
-  let lastBbPos = [flat[0], flat[1], 0];
-  // Screen-space vehicle marker: at overview zoom the ground quad (4 m wide,
-  // real scale) is sub-pixel, so the same convoy image also renders as a
-  // fixed-size billboard that stays visible at any zoom. Its screen rotation
-  // tracks (route heading - camera heading), so the lead vehicle keeps
-  // pointing down-track while the user orbits. Hidden below 250 m altitude,
-  // where the ground quad is large enough to read on its own.
-  const BB_W = 48;
-  const runBb = viewer.entities.add({
-    position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 2),
-    billboard: {
-      image: window.__runnerBillboard.runSVG,
-      width: BB_W, height: BB_W,
-      rotation: 0,
-      disableDepthTest: true,
-      show: false
-    }
-  });
-  let lastBbKey = null;
-  const updateBb = (lon, lat, hd) => {
-    const cam = viewer.camera;
-    const alt = cam.positionCartographic.height;
-    const showBb = alt > 250;
-    let rot = hd - cam.heading;
-    rot = ((rot % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
-    if (!isFinite(rot)) rot = 0;
-    const key = (showBb ? 1 : 0) + '|' + rot.toFixed(3) + '|' + lon.toFixed(6) + '|' + lat.toFixed(6);
-    if (key === lastBbKey) return;
-    lastBbKey = key;
-    runBb.billboard.show = showBb;
-    runBb.billboard.rotation = rot;
-    runBb.position = Cesium.Cartesian3.fromDegrees(lon, lat, 2);
+
+  const toRad = (x) => x * Math.PI / 180;
+  // Compass heading over a +-6 point window — a single GPS segment is far too
+  // noisy to steer by.
+  const headingAt = (j) => {
+    const ia = Math.max(0, j - 6) * 4, ib = Math.min(N - 1, j + 6) * 4;
+    const lat = flat[j * 4 + 1];
+    const hd = Math.atan2((flat[ib] - flat[ia]) * Math.cos(toRad(lat)), flat[ib + 1] - flat[ia + 1]);
+    return isFinite(hd) ? hd : 0;
   };
-  viewer.scene.camera.changed.addEventListener(() => {
-    if (lastBbKey !== null) updateBb(lastBbPos[0], lastBbPos[1], lastBbPos[2]);
-  });
-  let lastHdDeg = null;
-  const setRunnerQuad = (i, lon, lat) => {
-    const ia = (i - 3 < 0 ? 0 : i - 3) * 4, ib = Math.min(i + 3, N - 1) * 4;
-    const hd = Math.atan2((flat[ib] - flat[ia]) * Math.cos(toRad(lat)), flat[ib+1] - flat[ia+1]);
-    if (!isFinite(hd)) return;
-    const o = RUN_S_M / 2;
-    const off = (mE, mN) => Cesium.Cartesian3.fromDegrees(
-      lon + mE / (111320 * Math.cos(toRad(lat))), lat + mN / 110574, RUN_H_M);
-    runnerPoly.polygon.hierarchy = [
-      off(-o, -o), off(o, -o), off(o, o), off(-o, o)
-    ];
-    const hdDeg = hd * 180 / Math.PI;
-    if (Math.abs(hdDeg - lastHdDeg) > 0.5) { // re-bake the image only when it visibly turns
-      runMat.image = window.__runnerBillboard.runSVGrot(hdDeg);
-      lastHdDeg = hdDeg;
-    }
-    lastBbPos = [lon, lat, hd];
-    updateBb(lon, lat, hd);
+  // Pose `d` metres back along the track from route point i.
+  const poseBack = (d, i, lon, lat) => {
+    if (d <= 0) return [lon, lat, headingAt(i)];
+    const target = distArr[i] - d;
+    if (target <= 0) return [flat[0], flat[1], headingAt(0)];
+    let lo = 0, hi = i;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (distArr[mid] <= target) lo = mid; else hi = mid - 1; }
+    const j = lo, seg = distArr[j + 1] - distArr[j];
+    const f = seg > 0 ? (target - distArr[j]) / seg : 0;
+    return [flat[j*4] + f * (flat[(j+1)*4] - flat[j*4]),
+            flat[j*4+1] + f * (flat[(j+1)*4+1] - flat[j*4+1]), headingAt(j)];
   };
-  setRunnerQuad(0, flat[0], flat[1]);
-  const runnerGlow = viewer.entities.add({
-    position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 0),
-    point: { pixelSize: 26, color: Cesium.Color.fromCssColorString('rgba(255,210,63,0.4)'),
-             disableDepthTestDistance: Number.POSITIVE_INFINITY }
+  let convoyPose = [flat[0], flat[1], 0], lastConvoy = [0, flat[0], flat[1]];
+  const setConvoy = (i, lon, lat) => {
+    lastConvoy = [i, lon, lat];
+    convoyPose = [lon, lat, headingAt(i)];
+    const alt = viewer.camera.positionCartographic.height;
+    const flatIcon = alt > BB_ALT;
+    for (const v of convoy) {
+      const p = poseBack(v.back, i, lon, lat);
+      const pos = Cesium.Cartesian3.fromDegrees(p[0], p[1], 0);
+      v.ent.position = pos;
+      v.ent.orientation = Cesium.Transforms.headingPitchRollQuaternion(
+        pos, new Cesium.HeadingPitchRoll(p[2], 0, 0));
+      v.model.show = !flatIcon;
+      v.bb.billboard.show = flatIcon;   // the graphics flag wins over Entity.show
+      if (flatIcon) {
+        v.bb.position = pos;
+        let rot = p[2] - viewer.camera.heading;
+        rot = ((rot % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+        v.bb.billboard.rotation = isFinite(rot) ? rot : 0;
+      }
+    }
+  };
+  // Orbiting re-aims the glyphs without moving anything along the track, and
+  // zooming crosses the models/glyph boundary — so sync on every rendered
+  // frame while the glyph is up, and once per crossing on the way back down.
+  let lastFlatIcon = null;
+  viewer.scene.preRender.addEventListener(() => {
+    const high = viewer.camera.positionCartographic.height > BB_ALT;
+    if (high || high !== lastFlatIcon) { lastFlatIcon = high; setConvoy.apply(null, lastConvoy); }
   });
+  setConvoy(0, flat[0], flat[1]);
+  window.__tp = { viewer, convoy, pose: () => convoyPose }; // debug/test hook
+
+  // A key light that follows the camera instead of the sun: on a flat globe at
+  // an arbitrary orbit, a real-sun light leaves the convoy in silhouette half
+  // the time, and shape-from-shading is what makes a vehicle read as a vehicle.
+  // Aimed high and to one side of the view axis rather than down it: with the
+  // light along the eye, every camera-facing face gets the same flat value and
+  // the vehicle loses its form.
+  const KEY_LIGHT = new Cesium.DirectionalLight({
+    direction: new Cesium.Cartesian3(0.42, -0.62, -0.66),
+    intensity: 1.25
+  });
+  viewer.scene.light = KEY_LIGHT;
+  viewer.scene.dynamicLighting = true;
+  {
+    const dirCam = new Cesium.Cartesian3(0.42, -0.62, -0.66);
+    const inv = new Cesium.Matrix4(), dirW = new Cesium.Cartesian3();
+    viewer.scene.preRender.addEventListener(() => {
+      const vt = viewer.camera.viewTransform;
+      if (!vt) return;
+      Cesium.Matrix4.transpose(vt, inv);
+      Cesium.Matrix4.multiplyByPointAsVector(inv, dirCam, dirW);
+      KEY_LIGHT.direction = Cesium.Cartesian3.normalize(dirW, dirW);
+    });
+  }
 
   const markers = [];
   const pushEntity = (m) => {
@@ -804,8 +759,7 @@ async function init() {
     let lon, lat;
     for (const b of breakInfo) { if (at >= b.start && at <= b.end) { i = b.preIdx; lon = flat[i*4]; lat = flat[i*4+1]; break; } }
     if (lon === undefined) { const p = pointAt(at); lon = p[0]; lat = p[1]; }
-    const rPos = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
-    runnerGlow.position = rPos; setRunnerQuad(i, lon, lat);
+    setConvoy(i, lon, lat);
     milestoneRead.textContent = (distArr[i]/1609.344).toFixed(2) + ' mi';
     timeRead.textContent = fmtClock(at);
     // Regrow the purple (traveled) halo a few times a second (a clampToGround polyline that
