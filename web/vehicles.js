@@ -351,6 +351,25 @@
   const DIMS = {};
   const cache = new Map();
 
+  // Cesium reads a Y-up glTF into its own Z-up scene frame with the axis
+  // permutation (x,y,z) -> (z,x,y). Authored here with the nose at -Z, that
+  // leaves the vehicle pointing 90 deg counter-clockwise from its heading —
+  // measured, not guessed: the nose marker landed at 228 deg for a heading of
+  // 322 deg. Pre-rotating the geometry by the inverse (x,y,z) -> (-z,y,x)
+  // puts the nose on the frame Cesium treats as "along the heading", so
+  // headingPitchRollQuaternion(pos, HeadingPitchRoll(h,0,0)) aims it down the
+  // trail for real. Up is untouched, and the ground plane is still y = 0.
+  function reorient(g) {
+    g.pris.forEach((prim) => {
+      for (const arr of [prim.pos, prim.nrm]) {
+        for (let i = 0; i < arr.length; i += 3) {
+          const x = arr[i], z = arr[i + 2];
+          arr[i] = -z; arr[i + 2] = x;
+        }
+      }
+    });
+  }
+
   function maxOf(a) { let m = 0; for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
   function gltfJson(g, kind) {
     const chunks = [], views = [], accessors = [], primitives = [];
@@ -421,6 +440,7 @@
     if (cache.has(kind)) return cache.get(kind);
     const g = new Geo();
     DIMS[kind] = BUILDERS[kind](g);
+    reorient(g);
     const json = gltfJson(g, kind);
     // A blob: URL keeps a real content-type on the response, which is how
     // Cesium decides the payload is glTF-json rather than a binary glb.

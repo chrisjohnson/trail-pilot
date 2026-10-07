@@ -412,6 +412,10 @@ async function init() {
   const runKind = CONVOYS[String(TP.vehicle)] ? String(TP.vehicle) : 'jeep';
   const TOW_M = 3.4;        // bumper-to-bumper gap
   const VEHICLE_SCALE = 1.1; // slightly heroic, as the flat icon used to be
+  // A true-scale 4.5 m vehicle is a speck by the time you can see a mile of
+  // trail, so the models carry a screen-space floor like the old icon did.
+  const MIN_PX = 96;        // never smaller than this on screen
+  const MAX_SCALE = 40;     // how far that floor is allowed to inflate them
   // Far above, even the pixel-floored models are a speck, so the convoy swaps
   // to a flat screen-space glyph: the same vehicles from above, nose up-track.
   // Rotated by (track heading − camera heading), so the string keeps pointing
@@ -455,15 +459,15 @@ async function init() {
           // A pixel floor keeps the vehicles legible from a low pass to well
           // above the treeline; maximumScale stops it growing without bound
           // when the floor takes over (see the glyph for the rest of the way).
-          minimumPixelSize: 42,
-          maximumScale: 10,
+          minimumPixelSize: MIN_PX,
+          maximumScale: MAX_SCALE,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         }
       });
       const bb = viewer.entities.add({
         position: Cesium.Cartesian3.fromDegrees(flat[0], flat[1], 2),
         billboard: {
-          image: glyph(kind), width: 26, height: 28, rotation: 0,
+          image: glyph(kind), width: 34, height: 38, rotation: 0,
           disableDepthTestDistance: Number.POSITIVE_INFINITY, show: false
         }
       });
@@ -484,7 +488,14 @@ async function init() {
   const poseBack = (d, i, lon, lat) => {
     if (d <= 0) return [lon, lat, headingAt(i)];
     const target = distArr[i] - d;
-    if (target <= 0) return [flat[0], flat[1], headingAt(0)];
+    if (target <= 0) {
+      // Not enough trail behind the leader yet. Extend the string straight back
+      // along the heading at the start, so the convoy queues up off the end of
+      // the route instead of piling every towed vehicle onto the start point.
+      const hd = headingAt(0), m = -target, lat0 = flat[1];
+      return [flat[0] - m * Math.sin(hd) / (111320 * Math.cos(toRad(lat0))),
+              flat[1] - m * Math.cos(hd) / 111320, hd];
+    }
     let lo = 0, hi = i;
     while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (distArr[mid] <= target) lo = mid; else hi = mid - 1; }
     const j = lo, seg = distArr[j + 1] - distArr[j];
@@ -492,14 +503,35 @@ async function init() {
     return [flat[j*4] + f * (flat[(j+1)*4] - flat[j*4]),
             flat[j*4+1] + f * (flat[(j+1)*4+1] - flat[j*4+1]), headingAt(j)];
   };
-  let convoyPose = [flat[0], flat[1], 0], lastConvoy = [0, flat[0], flat[1]];
+  let convoyPose = [flat[0], flat[1], 0], lastConvoy = [0, flat[0], flat[1]], lastStretch = 1;
+  // The pixel floor inflates the models to keep them findable, so the tow string
+  // has to stretch by the same factor or the convoy piles up on itself. This is
+  // the factor Cesium is applying right now: the model's natural screen size
+  // against the floor, clamped exactly as minimumPixelSize/maximumScale clamp it.
+  const floorInflation = () => {
+    const f = viewer.camera.frustum;
+    const fovy = f.fovy !== undefined ? f.fovy : (f.fov || Cesium.Math.toRadians(60));
+    const h = viewer.scene.canvas.clientHeight || viewer.scene.canvas.height || 800;
+    const dims = TrailPilotVehicles.dims(convoy[0].kind);
+    const metres = (dims.front + dims.back) * VEHICLE_SCALE;
+    const here = Cesium.Cartesian3.fromDegrees(lastConvoy[1], lastConvoy[2], 0);
+    // positionWC, not position: under camera.lookAt() the eye lives in the
+    // camera's own frame, so .position is (0,0,0) and every range comes out as
+    // one Earth radius — which pinned this to the clamp and flung the towed
+    // vehicles hundreds of metres down the trail.
+    const range = Math.max(1, Cesium.Cartesian3.distance(viewer.camera.positionWC, here));
+    const px = metres * h / (2 * range * Math.tan(fovy / 2));
+    return px > 0 ? Math.min(MAX_SCALE, Math.max(1, MIN_PX / px)) : 1;
+  };
   const setConvoy = (i, lon, lat) => {
     lastConvoy = [i, lon, lat];
     convoyPose = [lon, lat, headingAt(i)];
     const alt = viewer.camera.positionCartographic.height;
     const flatIcon = alt > BB_ALT;
+    const stretch = floorInflation();
+    lastStretch = stretch;
     for (const v of convoy) {
-      const p = poseBack(v.back, i, lon, lat);
+      const p = poseBack(v.back * stretch, i, lon, lat);
       const pos = Cesium.Cartesian3.fromDegrees(p[0], p[1], 0);
       v.ent.position = pos;
       v.ent.orientation = Cesium.Transforms.headingPitchRollQuaternion(
@@ -520,10 +552,19 @@ async function init() {
   let lastFlatIcon = null;
   viewer.scene.preRender.addEventListener(() => {
     const high = viewer.camera.positionCartographic.height > BB_ALT;
-    if (high || high !== lastFlatIcon) { lastFlatIcon = high; setConvoy.apply(null, lastConvoy); }
+    // The models' pixel floor is re-applied by Cesium on every frame, so the
+    // string spacing has to follow it or the convoy drifts apart and piles up as
+    // you zoom. Re-pose when the glyph is up (it also needs the camera heading)
+    // and whenever the inflation factor has visibly moved.
+    const k = floorInflation();
+    if (high || high !== lastFlatIcon || Math.abs(k / lastStretch - 1) > 0.02) {
+      lastFlatIcon = high;
+      setConvoy.apply(null, lastConvoy);
+    }
   });
   setConvoy(0, flat[0], flat[1]);
-  window.__tp = { viewer, convoy, pose: () => convoyPose }; // debug/test hook
+  window.__tp = { viewer, convoy, pose: () => convoyPose, stretch: () => lastStretch,
+                  inflation: () => floorInflation() }; // debug/test hook
 
   // A key light that follows the camera instead of the sun: on a flat globe at
   // an arbitrary orbit, a real-sun light leaves the convoy in silhouette half
