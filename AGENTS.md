@@ -44,8 +44,11 @@ count or the timezone on that file needs justifying.
 It is not sufficient on its own. That GPX **keeps logging stationary points
 through its breaks**, so it cannot tell "parked, still writing" apart from
 "parked, logger went quiet" — and the pipeline treats a >600 s gap with no
-points in it as the stopped case. `input/silent-gap-breaks.gpx` (2h30m, 283
-points, 2 silent 40-minute gaps, `breaks: 2`) covers the second case. Anything
+points in it as the stopped case. `fixtures/silent-gap-breaks.gpx` (2h30m, 283
+points, 2 silent 40-minute gaps, `breaks: 2`) covers the second case. It is
+synthetic, so unlike the reference run it can be tracked — `input/*.gpx` is
+ignored because that is where a user drops their own, which is also why the
+reference fixture only exists on a box that has ingested it. Anything
 that reads stopped-ness from time or speed should be checked against both; a
 change that is right on the reference fixture and wrong on silent gaps has
 already shipped once this way.
