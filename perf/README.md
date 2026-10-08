@@ -47,7 +47,7 @@ Measured at 1512×950, same route, same scenarios, before and after.
 | tiles rendered / frame | 74 | 49 |
 | main-thread blocking, rotate | 14,252 ms | 1,318 ms |
 | frames while idle (settled) | 0 | 0 |
-| entities | 172 | 44 |
+| route polylines draped against terrain | 162 | 0 |
 
 Three changes, in order of effect:
 
@@ -62,7 +62,7 @@ Three changes, in order of effect:
    height sits exactly on that surface. **If real terrain is ever added this
    has to go back to `clampToGround`**; a flat line through mountains is wrong
    in a way a flat map is not.
-   The three lines now live at 0.40 / 0.42 / 0.44 m so the depth buffer does
+   The halo is still 160 chunks, but flat ones: measured back-to-back, 32 and 160 undraped chunks cost the identical 85 draw calls and 35.2k triangles, because Cesium batches them into one primitive either way. Draping was the entire cost, not the count. The three lines live at 0.40 / 0.42 / 0.44 m so the depth buffer does
    what `zIndex` used to do for coplanar draped lines, where draw order is
    undefined.
 2. **Atmosphere, sky, sun, moon, stars and fog off.** `enableLighting` is
