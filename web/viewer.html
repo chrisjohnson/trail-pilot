@@ -821,28 +821,39 @@ async function init() {
   // clearly. A median keeps a mostly-parked window parked and a mostly-moving
   // window moving, and only flips at the boundary. The on-map halo is left on
   // raw speedAt — that is where the fine-grained detail belongs.
-  const effSpd = new Float64Array(N);
-  for (let i = 0; i < N; i++) effSpd[i] = (i < N - 1 && timeArr[i + 1] - timeArr[i] > 600) ? 0 : spd[i];
-  const firstAtOrAfter = (t) => {
-    let lo = 0, hi = N;
-    while (lo < hi) { const m = (lo + hi) >> 1; if (timeArr[m] < t) lo = m + 1; else hi = m; }
-    return lo;
-  };
+  // Sample speed on a fixed TIME grid, not over the route points that happen to
+  // fall in the window. A break where the logger went quiet contains no points
+  // at all, so a median over the points in a window centred there finds nothing
+  // and falls back to the first point after the break — reporting the speed you
+  // resumed at, i.e. green for a 40-minute stop. (This is exactly what broke
+  // the first version of this: the reference fixture keeps logging stationary
+  // points through its breaks, so it looked right on the fixture and wrong on
+  // any route recorded by something that stops writing when it stops moving.)
+  //
+  // Walking time forward and calling a >600 s gap parked is what speedAt
+  // already does for the hover readout, so the strip now agrees with the
+  // readout instead of contradicting it.
+  const BAND_SMOOTH_S = 240, BAND_STEP_S = 30;
+  const nSamp = Math.max(2, Math.ceil(total / BAND_STEP_S) + 1);
+  const sampSpd = new Float64Array(nSamp);
+  {
+    let i = 0;
+    for (let j = 0; j < nSamp; j++) {
+      const t = j * BAND_STEP_S;
+      while (i < N - 1 && timeArr[i + 1] <= t) i++;
+      sampSpd[j] = (i < N - 1 && timeArr[i + 1] - timeArr[i] > 600) ? 0 : spd[i];
+    }
+  }
   const medBuf = [];
   const medianSpd = (t0, t1) => {
-    const a = firstAtOrAfter(t0), b = Math.max(a + 1, firstAtOrAfter(t1));
+    const a = Math.max(0, Math.floor(t0 / BAND_STEP_S));
+    const b = Math.min(nSamp - 1, Math.ceil(t1 / BAND_STEP_S));
     medBuf.length = 0;
-    for (let i = a; i < b; i++) medBuf.push(effSpd[i]);
+    for (let j = a; j <= b; j++) medBuf.push(sampSpd[j]);
     medBuf.sort((x, y) => x - y);
     const m = medBuf.length >> 1;
     return medBuf.length % 2 ? medBuf[m] : (medBuf[m - 1] + medBuf[m]) / 2;
   };
-  // Window is deliberately wider than the band it colours. A band is ~108 s
-  // and ~3.5 px, so a one-band median still left visible band-to-band chatter;
-  // +-4 min is ~4 bands and reads as stretches of road instead of samples.
-  // Shortest break in the reference run is 10 min, so its middle stays fully
-  // inside the window and it still comes out solid grey.
-  const BAND_SMOOTH_S = 240;
   const bandRGB = new Array(PLOT_N);
   for (let k = 0; k < PLOT_N; k++) bandRGB[k] = speedRGB(medianSpd(ptx[k] - BAND_SMOOTH_S, ptx[k] + BAND_SMOOTH_S));
   document.getElementById('tl-legend').innerHTML =
