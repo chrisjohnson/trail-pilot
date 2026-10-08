@@ -412,7 +412,7 @@ async function init() {
   // PolylineColorAppearance — the documented way — drew nothing at all in
   // 1.125 across translucent/opaque, released/unreleased and both arc types.
   // 32 chunks at 26 px wide reads as a gradient and is provably drawn.
-  const HALO_CHUNKS = 32;
+  const HALO_CHUNKS = 160;
   {
     const step = (N - 1) / HALO_CHUNKS;
     for (let j = 0; j < HALO_CHUNKS; j++) {
@@ -811,8 +811,40 @@ async function init() {
   const PLOT_N = 400, ptx = new Float64Array(PLOT_N), pty = new Float64Array(PLOT_N);
   for (let k=0;k<PLOT_N;k++){ const t=k/(PLOT_N-1)*total; ptx[k]=t; pty[k]=elevAtTime(t); }
   // ---- Scrubber speed band: same gradient as the map route (ENV thresholds as focal points) ----
+  // Each band paints ~108 s of the run, but it used to be coloured by whatever
+  // the single ~6 s sample at its left edge happened to say, so ordinary GPS
+  // speed noise came out as yellow/green/orange flicker one band wide. The
+  // colour now describes the span the band actually covers.
+  //
+  // Median, not mean: a mean over a window that straddles a break turns the
+  // break orange, and the breaks are the one thing this strip has to say
+  // clearly. A median keeps a mostly-parked window parked and a mostly-moving
+  // window moving, and only flips at the boundary. The on-map halo is left on
+  // raw speedAt — that is where the fine-grained detail belongs.
+  const effSpd = new Float64Array(N);
+  for (let i = 0; i < N; i++) effSpd[i] = (i < N - 1 && timeArr[i + 1] - timeArr[i] > 600) ? 0 : spd[i];
+  const firstAtOrAfter = (t) => {
+    let lo = 0, hi = N;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (timeArr[m] < t) lo = m + 1; else hi = m; }
+    return lo;
+  };
+  const medBuf = [];
+  const medianSpd = (t0, t1) => {
+    const a = firstAtOrAfter(t0), b = Math.max(a + 1, firstAtOrAfter(t1));
+    medBuf.length = 0;
+    for (let i = a; i < b; i++) medBuf.push(effSpd[i]);
+    medBuf.sort((x, y) => x - y);
+    const m = medBuf.length >> 1;
+    return medBuf.length % 2 ? medBuf[m] : (medBuf[m - 1] + medBuf[m]) / 2;
+  };
+  // Window is deliberately wider than the band it colours. A band is ~108 s
+  // and ~3.5 px, so a one-band median still left visible band-to-band chatter;
+  // +-4 min is ~4 bands and reads as stretches of road instead of samples.
+  // Shortest break in the reference run is 10 min, so its middle stays fully
+  // inside the window and it still comes out solid grey.
+  const BAND_SMOOTH_S = 240;
   const bandRGB = new Array(PLOT_N);
-  for (let k = 0; k < PLOT_N; k++) bandRGB[k] = speedRGB(speedAt(ptx[k]));
+  for (let k = 0; k < PLOT_N; k++) bandRGB[k] = speedRGB(medianSpd(ptx[k] - BAND_SMOOTH_S, ptx[k] + BAND_SMOOTH_S));
   document.getElementById('tl-legend').innerHTML =
     'Speed <span style="display:inline-block;width:84px;height:8px;border-radius:4px;background:linear-gradient(90deg,#9aa1a9 0%,#9aa1a9 13%,#ff5252 21%,#FFD23F 58%,#2ed650 100%);vertical-align:middle;margin:0 7px"></span>'
     + TP.stopMph + ' mph stopped &rarr; &ge; ' + TP.slowMph + ' mph';
