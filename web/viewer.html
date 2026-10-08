@@ -302,6 +302,32 @@ async function init() {
     for (let j = Math.max(0, i - SMOOTH); j <= Math.min(N - 2, i + SMOOTH); j++) { s += rawSpd[j]; c++; }
     spd[i] = s / c;
   }
+  // Where the run actually stopped, in run-clock seconds, taken from the
+  // pipeline's break detection. The viewer used to re-derive "stopped" from
+  // speed plus a >600 s gap between points, and the two definitions disagreed.
+  // The first break on the reference run parks for 10 minutes, but its last
+  // logged point is only 568 s before the next one — under the threshold — so
+  // the whole break rendered orange, at the speed the vehicle arrived at,
+  // directly under a waypoint reading "10m break".
+  //
+  // One source of truth: if the pipeline called it a break, speed is zero
+  // there. The strip, the map halo and the hover readout then all agree with
+  // the marker on the map, because they are all reading the same fact instead
+  // of three guesses about it.
+  const t0run = new Date(D.startUTC.replace(' ', 'T').replace(' UTC', 'Z')).getTime() / 1000;
+  const breakSpans = D.breaks.map((b) => {
+    const st = new Date(b.startUTC.replace(' ', 'T').replace(' UTC', 'Z')).getTime() / 1000 - t0run;
+    return { start: st, end: st + b.durSec };
+  });
+  const inBreak = (t) => {
+    for (let i = 0; i < breakSpans.length; i++) {
+      const b = breakSpans[i];
+      if (t >= b.start && t <= b.end) return true;
+    }
+    return false;
+  };
+  for (let i = 0; i < N - 1; i++) if (inBreak(timeArr[i])) spd[i] = 0;
+
   const speedAt = (t) => {
     let i = timeToIndex(t); if (i < 0) i = 0; if (i > N - 2) i = N - 2;
     if (N > 1 && timeArr[i+1] - timeArr[i] > 600) return 0; // break gap = stopped
@@ -791,12 +817,11 @@ async function init() {
   const elevCanvas = document.getElementById('elev');
   const ectx = elevCanvas.getContext('2d');
   let eH = 88, M_TO_FT = 3.28084, padL = 44, padR = 10, padT = 12, padB = 18;
-  const t0run = new Date(D.startUTC.replace(' ','T').replace(' UTC','Z')).getTime()/1000;
-  // breaks in the run clock: start/end (sec), flat elevation at the pre-break point
-  const breakInfo = D.breaks.map(b => {
-    const s = new Date(b.startUTC.replace(' ','T').replace(' UTC','Z')).getTime()/1000 - t0run;
-    let pre = 0; for (let i=0;i<N;i++){ if (timeArr[i] < s) pre=i; else break; }
-    return { start: s, end: s + b.durSec, ele: flat[pre*4+2]*M_TO_FT, preIdx: pre };
+  // breaks in the run clock: flat elevation at the pre-break point, so the
+  // profile line goes level across a stop instead of drifting with GPS jitter
+  const breakInfo = breakSpans.map(b => {
+    let pre = 0; for (let i=0;i<N;i++){ if (timeArr[i] < b.start) pre=i; else break; }
+    return { start: b.start, end: b.end, ele: flat[pre*4+2]*M_TO_FT, preIdx: pre };
   });
   const elevAtTime = (t) => {
     for (const b of breakInfo) if (t >= b.start && t <= b.end) return b.ele;
