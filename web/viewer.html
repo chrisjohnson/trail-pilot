@@ -310,10 +310,15 @@ async function init() {
   // Gradient with the ENV thresholds as focal points: full red at stopMph,
   // full yellow halfway, full green at slowMph (clamped above).
   const lerp = (a, b, t) => a + (b - a) * t;
+  // Stopped is grey, not red. Red is a warning colour and it was doing double
+  // duty: a 3 mph crawl and a 40-minute parked break both came out the same
+  // shade, so the breaks did not read as gaps in the driving. Grey says "no
+  // motion here" and leaves red to mean what it means everywhere else, slow.
+  const STOP_RGB = [154, 161, 169];
   const speedRGB = (mph) => {
     const s = TP.stopMph, e = TP.slowMph;
-    if (e <= s) return mph <= s ? [255, 82, 82] : [67, 217, 173];
-    if (mph <= s) return [255, 82, 82];
+    if (e <= s) return mph <= s ? STOP_RGB : [67, 217, 173];
+    if (mph <= s) return STOP_RGB;
     if (mph >= e) return [46, 214, 80];
     const mid = (s + e) / 2;
     if (mph <= mid) { const t = (mph - s) / (mid - s); return [lerp(255, 255, t), lerp(82, 210, t), lerp(82, 63, t)]; }
@@ -809,7 +814,7 @@ async function init() {
   const bandRGB = new Array(PLOT_N);
   for (let k = 0; k < PLOT_N; k++) bandRGB[k] = speedRGB(speedAt(ptx[k]));
   document.getElementById('tl-legend').innerHTML =
-    'Speed <span style="display:inline-block;width:84px;height:8px;border-radius:4px;background:linear-gradient(90deg,#ff5252,#FFD23F,#2ed650);vertical-align:middle;margin:0 7px"></span>'
+    'Speed <span style="display:inline-block;width:84px;height:8px;border-radius:4px;background:linear-gradient(90deg,#9aa1a9 0%,#9aa1a9 13%,#ff5252 21%,#FFD23F 58%,#2ed650 100%);vertical-align:middle;margin:0 7px"></span>'
     + TP.stopMph + ' mph stopped &rarr; &ge; ' + TP.slowMph + ' mph';
   let eW = 600;
   const sizeElev = () => {
