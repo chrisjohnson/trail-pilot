@@ -450,7 +450,17 @@ async function init() {
   // prefix without rebuilding its geometry every time the playhead moved.
   const HALO_CHUNKS = 160;
   const corePts = ptsAt(0.44);
-  const A_HALO = 128, A_HALO_DIM = 38, A_CORE_DIM = 70, A_OUT_DIM = 0.16;
+  // Darkening matters as much as the alpha here. OpenTopoMap is pale, so a
+  // saturated speed colour at low alpha still reads as a coloured smear — it
+  // just becomes a paler version of the same shout. Pulling the hue most of the
+  // way down toward the map's own ink makes the traveled trail look like a
+  // shadow of itself: the speed is still legible if you look for it, but it
+  // stops competing with the part of the route that is still ahead.
+  const A_HALO = 128, A_HALO_DIM = 96, A_CORE_DIM = 118, A_OUT_DIM = 0.10, DIM_MIX = 0.74;
+  const DIM_INK = [13, 17, 25];
+  const dimRGB = (c) => [c[0] + (DIM_INK[0] - c[0]) * DIM_MIX,
+                         c[1] + (DIM_INK[1] - c[1]) * DIM_MIX,
+                         c[2] + (DIM_INK[2] - c[2]) * DIM_MIX];
   const routeChunks = [];
   {
     const step = (N - 1) / HALO_CHUNKS;
@@ -468,7 +478,8 @@ async function init() {
       const core = viewer.entities.add({
         polyline: { positions: corePts.slice(i0, i1 + 1), width: 5, arcType: Cesium.ArcType.NONE, material: coreMat(1, 0.55) }
       });
-      routeChunks.push({ i1, halo, core, haloBright, haloDim: Cesium.Color.fromBytes(r, g, bl, A_HALO_DIM),
+      const d = dimRGB([r, g, bl]);
+      routeChunks.push({ i1, halo, core, haloBright, haloDim: Cesium.Color.fromBytes(d[0], d[1], d[2], A_HALO_DIM),
         coreBright: core.polyline.material, coreDim: coreMat(A_CORE_DIM / 255, A_OUT_DIM) });
     }
   }
