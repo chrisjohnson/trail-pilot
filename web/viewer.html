@@ -444,15 +444,30 @@ async function init() {
     }
     if (a > 0) for (let i = a; i <= z; i++) stableIdx[i] = a - 1;
   }
-  const ptsAt = (h) => {
+  const ptsAt = (h, src) => {
     const a = new Array(N);
     for (let i = 0; i < N; i++) {
       const s = stableIdx[i];
-      a[i] = Cesium.Cartesian3.fromDegrees(routeLonLat[s * 2], routeLonLat[s * 2 + 1], h, scene.globe.ellipsoid);
+      const lon = src ? src[i * 2] : routeLonLat[s * 2];
+      const lat = src ? src[i * 2 + 1] : routeLonLat[s * 2 + 1];
+      a[i] = Cesium.Cartesian3.fromDegrees(lon, lat, h, scene.globe.ellipsoid);
     }
     return a;
   };
-  const haloPts = ptsAt(0.40);
+  // The glow rides a lightly smoothed copy of the snapped track. The core keeps
+  // every GPS wiggle, but a 44 px ribbon that follows each one grows a barb at
+  // every vertex, and a few thousand barbs read as fur rather than as light.
+  // Five points is about five seconds of running: sub-pixel at overview zoom and
+  // far narrower than the glow's own falloff up close.
+  const haloLonLat = new Float64Array(N * 2);
+  for (let i = 0; i < N; i++) {
+    let lon = 0, lat = 0, c = 0;
+    for (let j = Math.max(0, i - 2); j <= Math.min(N - 1, i + 2); j++) {
+      lon += routeLonLat[stableIdx[j] * 2]; lat += routeLonLat[stableIdx[j] * 2 + 1]; c++;
+    }
+    haloLonLat[i * 2] = lon / c; haloLonLat[i * 2 + 1] = lat / c;
+  }
+  const haloPts = ptsAt(0.40, haloLonLat);
   const corePts = ptsAt(0.44);
   // One polyline per state, coloured per vertex, instead of 160 flat chunks.
   //
@@ -465,13 +480,12 @@ async function init() {
   // worst where the trail doubles back on itself. One polyline fits one plane
   // and the shingles disappear; checked side by side before changing anything.
   //
-  // Per-vertex colour is the thing the chunking existed to work around:
-  // PolylineGraphics has no `colors` and silently ignores one. Primitive +
-  // PolylineGeometry + PolylineColorAppearance does support it, and works in
-  // 1.125 with colorsPerVertex and a translucent appearance — an earlier
-  // attempt here concluded the appearance "drew nothing", which was a bad
-  // option in the probe rather than the API. The gradient is continuous now
-  // instead of stepping every 43 points.
+  // The gradient has to be carried by the material rather than by vertex
+  // colours, because the glow needs the same st.s to drive both the colour and
+  // the falloff. PolylineGraphics has no `colors` and silently ignores one, and
+  // an appearance that takes per-vertex colour takes no material, so the two
+  // cannot be combined on one polyline. One primitive, one ramp, continuous
+  // instead of stepping every 43 points the way the chunking did.
   //
   // The traveled part gets no halo at all, only the core line. It used to be a
   // dimmed copy of the same ribbon, and that could not be made to look right:
@@ -484,28 +498,60 @@ async function init() {
   // green were simply invisible. Rather than keep fighting the blend, the trail
   // behind you is now the thin core line and the glow is reserved for the part
   // of the route still ahead, which is the thing worth looking at.
-  const A_HALO = 128, A_CORE_DIM = 190, A_OUT_DIM = 0.22;
-  const haloAheadCols = new Array(N);
-  for (let i = 0; i < N; i++) {
-    const c = speedRGB(speedAt(timeArr[i]));
-    haloAheadCols[i] = new Cesium.Color(c[0] / 255, c[1] / 255, c[2] / 255, A_HALO / 255);
+  const A_CORE_DIM = 190, A_OUT_DIM = 0.22;
+  // The halo is a soft glow rather than a flat band. A PolylineGeometry hands
+  // its material st.s as the vertex-index fraction along the line and st.t as
+  // the position across the width, so a 1 px ramp carries the speed gradient
+  // lengthwise while the shader puts a Gaussian on the alpha sideways: the band
+  // fades to 0% at both edges and there is no hard border at width/2 to see.
+  // s0/s1 are the slice of the route a ribbon covers, which keeps the gradient
+  // aligned when the halo is split at the traveled boundary — st.s restarts at 0
+  // for every polyline, so without them the gradient would restart too.
+  const GLOW_W = 15, GLOW_K = 8, GLOW_PEAK = 0.85, RAMP_W = 1024;
+  const glowRamp = document.createElement('canvas');
+  glowRamp.width = RAMP_W; glowRamp.height = 1;
+  {
+    const gctx = glowRamp.getContext('2d');
+    const gimg = gctx.createImageData(RAMP_W, 1);
+    for (let x = 0; x < RAMP_W; x++) {
+      const i = Math.min(N - 2, Math.round(x / (RAMP_W - 1) * (N - 1)));
+      const c = speedRGB(speedAt(timeArr[i]));
+      gimg.data[x*4] = c[0]; gimg.data[x*4+1] = c[1]; gimg.data[x*4+2] = c[2]; gimg.data[x*4+3] = 255;
+    }
+    gctx.putImageData(gimg, 0, 0);
   }
-  const ribbon = (a, b, cols) => new Cesium.Primitive({
+  const glowMaterial = new Cesium.Material({
+    fabric: {
+      uniforms: { glowRamp: glowRamp, s0: 0, s1: 1 },
+      source: 'uniform sampler2D glowRamp;\nuniform float s0;\nuniform float s1;\n' +
+        'czm_material czm_getMaterial(czm_materialInput materialInput)\n{\n' +
+        '    czm_material material = czm_getDefaultMaterial(materialInput);\n' +
+        '    vec2 st = materialInput.st;\n' +
+        '    float u = abs(st.t * 2.0 - 1.0);\n' +
+        '    float k = ' + GLOW_K.toFixed(1) + ';\n' +
+        '    float tail = exp(-k);\n' +
+        '    material.diffuse = texture(glowRamp, vec2(mix(s0, s1, st.s), 0.5)).rgb;\n' +
+        '    material.alpha = ' + GLOW_PEAK.toFixed(2) + ' * (exp(-k * u * u) - tail) / (1.0 - tail);\n' +
+        '    return material;\n}'
+    }
+  });
+  const ribbon = (a, b) => new Cesium.Primitive({
     geometryInstances: new Cesium.GeometryInstance({
       geometry: new Cesium.PolylineGeometry({
-        positions: haloPts.slice(a, b), colors: cols.slice(a, b),
-        width: 26, colorsPerVertex: true, arcType: Cesium.ArcType.NONE,
+        positions: haloPts.slice(a, b),
+        width: GLOW_W, arcType: Cesium.ArcType.NONE,
+        vertexFormat: Cesium.VertexFormat.POSITION_AND_ST,
       }),
     }),
-    // depthMask is the part that matters for how this looks. A 26 px ribbon
+    // depthMask is the part that matters for how this looks. A 44 px ribbon
     // along a trail that turns back on itself overlaps its own earlier
     // fragments constantly, and a translucent draw without a depth write adds
     // up: every overlap becomes a darker patch, which is what read as
     // "overlapping triangles" along the route. Writing depth makes the second
     // coplanar fragment fail the depth test instead, so the ribbon is one
     // uniform wash of colour no matter how much of itself it covers.
-    appearance: new Cesium.PolylineColorAppearance({
-      translucent: true,
+    appearance: new Cesium.PolylineMaterialAppearance({
+      material: glowMaterial, translucent: true,
       renderState: { depthMask: true, depthTest: { enabled: true } },
     }),
     asynchronous: false,
@@ -532,7 +578,11 @@ async function init() {
     ribbonCut = cut;
     for (const r of ribbons) scene.primitives.remove(r);
     ribbons = [];
-    if (N - cut >= 2) ribbons.push(scene.primitives.add(ribbon(cut, N, haloAheadCols)));
+    // The ribbon starts at `cut`, so its st.s of 0 is the route's cut/(N-1) and
+    // its st.s of 1 is the route's end.
+    glowMaterial.uniforms.s0 = N > 1 ? cut / (N - 1) : 0;
+    glowMaterial.uniforms.s1 = 1;
+    if (N - cut >= 2) ribbons.push(scene.primitives.add(ribbon(cut, N)));
     coreDone.polyline.positions = corePts.slice(0, Math.max(2, cut + 1));
     coreAhead.polyline.positions = N - cut >= 2 ? corePts.slice(cut, N) : corePts.slice(N - 2, N);
   };
