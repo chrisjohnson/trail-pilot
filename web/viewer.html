@@ -424,83 +424,119 @@ async function init() {
   // coplanar by construction, and depth ordering of coincident geometry is
   // undefined. 2 cm apart is far below anything visible on a flat globe and lets
   // the depth buffer do what zIndex did for the draped version.
+  // A parked GPS does not sit still: it wanders by tens of metres while the
+  // vehicle is not moving, and the recorder keeps logging. Drawn as a 26 px
+  // ribbon, that scribble becomes a dark blob of self-crossing segments — the
+  // worst of them land exactly on the break markers, which is what read as
+  // "overlapping triangles". The elevation profile already goes level across a
+  // break for the same reason, so the ribbon now does the equivalent: every
+  // point inside a break snaps to where the run actually came to a halt. A
+  // stop draws as a stop instead of as a knot.
+  const stableIdx = new Int32Array(N);
+  for (let i = 0; i < N; i++) stableIdx[i] = i;
+  for (const b of breakSpans) {
+    let a = -1, z = -1;
+    for (let i = 0; i < N; i++) {
+      if (timeArr[i] < b.start) continue;
+      if (timeArr[i] > b.end) break;
+      if (a < 0) a = i;
+      z = i;
+    }
+    if (a > 0) for (let i = a; i <= z; i++) stableIdx[i] = a - 1;
+  }
   const ptsAt = (h) => {
     const a = new Array(N);
-    for (let i = 0; i < N; i++) a[i] = Cesium.Cartesian3.fromDegrees(routeLonLat[i * 2], routeLonLat[i * 2 + 1], h, scene.globe.ellipsoid);
+    for (let i = 0; i < N; i++) {
+      const s = stableIdx[i];
+      a[i] = Cesium.Cartesian3.fromDegrees(routeLonLat[s * 2], routeLonLat[s * 2 + 1], h, scene.globe.ellipsoid);
+    }
     return a;
   };
   const haloPts = ptsAt(0.40);
-  // The speed halo is 32 flat chunks rather than the 160 it used to be, and
-  // none of them are draped. Draping was the cost, not the count: 160
-  // clampToGround polylines meant 160 worker jobs before the map was usable.
-  // Per-vertex colour would have made this one primitive, but PolylineGraphics
-  // has no `colors` (it silently ignores one), and a Primitive +
-  // PolylineColorAppearance — the documented way — drew nothing at all in
-  // 1.125 across translucent/opaque, released/unreleased and both arc types.
-  // 32 chunks at 26 px wide reads as a gradient and is provably drawn.
-  // The traveled part of the route is quieter now rather than a different
-  // colour. It used to be a purple overlay laid on top of the speed halo, so a
-  // stretch you had already driven turned violet — two colours for the same
-  // road, and neither of them the speed the halo exists to show. Dimming the
-  // same colours instead keeps the speed readable and lets the eye fall to the
-  // part of the trail that is still ahead.
-  //
-  // The core is chunked on the same index ranges as the halo so both dim on the
-  // same boundary; one unbroken core polyline could not be dimmed along a
-  // prefix without rebuilding its geometry every time the playhead moved.
-  const HALO_CHUNKS = 160;
   const corePts = ptsAt(0.44);
-  // Darkening matters as much as the alpha here. OpenTopoMap is pale, so a
-  // saturated speed colour at low alpha still reads as a coloured smear — it
-  // just becomes a paler version of the same shout. Pulling the hue most of the
-  // way down toward the map's own ink makes the traveled trail look like a
-  // shadow of itself: the speed is still legible if you look for it, but it
-  // stops competing with the part of the route that is still ahead.
-  const A_HALO = 128, A_HALO_DIM = 96, A_CORE_DIM = 118, A_OUT_DIM = 0.10, DIM_MIX = 0.74;
-  const DIM_INK = [13, 17, 25];
-  const dimRGB = (c) => [c[0] + (DIM_INK[0] - c[0]) * DIM_MIX,
-                         c[1] + (DIM_INK[1] - c[1]) * DIM_MIX,
-                         c[2] + (DIM_INK[2] - c[2]) * DIM_MIX];
-  const routeChunks = [];
-  {
-    const step = (N - 1) / HALO_CHUNKS;
-    for (let j = 0; j < HALO_CHUNKS; j++) {
-      const i0 = Math.floor(j * step), i1 = Math.min(N - 1, Math.floor((j + 1) * step) + 1);
-      const [r, g, bl] = speedRGB(speedAt((timeArr[i0] + timeArr[Math.max(i0, i1 - 1)]) / 2));
-      const coreMat = (a, oa) => new Cesium.PolylineOutlineMaterialProperty({
-        color: Cesium.Color.fromCssColorString('#0a0d14').withAlpha(a),
-        outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,' + oa + ')'), outlineWidth: 1.5
-      });
-      const haloBright = Cesium.Color.fromBytes(r, g, bl, A_HALO);
-      const halo = viewer.entities.add({
-        polyline: { positions: haloPts.slice(i0, i1 + 1), width: 26, arcType: Cesium.ArcType.NONE, material: haloBright }
-      });
-      const core = viewer.entities.add({
-        polyline: { positions: corePts.slice(i0, i1 + 1), width: 5, arcType: Cesium.ArcType.NONE, material: coreMat(1, 0.55) }
-      });
-      const d = dimRGB([r, g, bl]);
-      routeChunks.push({ i1, halo, core, haloBright, haloDim: Cesium.Color.fromBytes(d[0], d[1], d[2], A_HALO_DIM),
-        coreBright: core.polyline.material, coreDim: coreMat(A_CORE_DIM / 255, A_OUT_DIM) });
-    }
+  // One polyline per state, coloured per vertex, instead of 160 flat chunks.
+  //
+  // The chunking was the artifact. PolylineGeometry fits a plane through each
+  // polyline's own points and extrudes the width inside that plane, and a
+  // chunk of ~43 GPS points is jittery enough that the fit is dominated by the
+  // jitter rather than by the direction of the trail. Every chunk therefore
+  // got a slightly different plane, so the ribbons met at small angles and
+  // shingled over one another — darker overlapping triangles at each join,
+  // worst where the trail doubles back on itself. One polyline fits one plane
+  // and the shingles disappear; checked side by side before changing anything.
+  //
+  // Per-vertex colour is the thing the chunking existed to work around:
+  // PolylineGraphics has no `colors` and silently ignores one. Primitive +
+  // PolylineGeometry + PolylineColorAppearance does support it, and works in
+  // 1.125 with colorsPerVertex and a translucent appearance — an earlier
+  // attempt here concluded the appearance "drew nothing", which was a bad
+  // option in the probe rather than the API. The gradient is continuous now
+  // instead of stepping every 43 points.
+  //
+  // The traveled part gets no halo at all, only the core line. It used to be a
+  // dimmed copy of the same ribbon, and that could not be made to look right:
+  // a translucent ribbon accumulates alpha wherever two parts of the route
+  // overlap on screen, and this run doubles back on itself constantly — the
+  // loop out to Chestnut Gap goes out and back along nearly the same corridor.
+  // Those passes are hundreds of metres apart in 3D, so depth testing cannot
+  // reject one for the other, and every overlap came out a darker patch. Dark
+  // on pale imagery made each one obvious; the same overlaps under a saturated
+  // green were simply invisible. Rather than keep fighting the blend, the trail
+  // behind you is now the thin core line and the glow is reserved for the part
+  // of the route still ahead, which is the thing worth looking at.
+  const A_HALO = 128, A_CORE_DIM = 190, A_OUT_DIM = 0.22;
+  const haloAheadCols = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const c = speedRGB(speedAt(timeArr[i]));
+    haloAheadCols[i] = new Cesium.Color(c[0] / 255, c[1] / 255, c[2] / 255, A_HALO / 255);
   }
-  // Dim the chunks the playhead has finished, undim anything it has come back
-  // under. Only the chunks between the old boundary and the new one are
-  // touched, so this is O(chunks crossed) rather than O(160) per frame, and
-  // scrubbing backwards is the same loop in the other direction.
-  let dimmedThrough = -1;
+  const ribbon = (a, b, cols) => new Cesium.Primitive({
+    geometryInstances: new Cesium.GeometryInstance({
+      geometry: new Cesium.PolylineGeometry({
+        positions: haloPts.slice(a, b), colors: cols.slice(a, b),
+        width: 26, colorsPerVertex: true, arcType: Cesium.ArcType.NONE,
+      }),
+    }),
+    // depthMask is the part that matters for how this looks. A 26 px ribbon
+    // along a trail that turns back on itself overlaps its own earlier
+    // fragments constantly, and a translucent draw without a depth write adds
+    // up: every overlap becomes a darker patch, which is what read as
+    // "overlapping triangles" along the route. Writing depth makes the second
+    // coplanar fragment fail the depth test instead, so the ribbon is one
+    // uniform wash of colour no matter how much of itself it covers.
+    appearance: new Cesium.PolylineColorAppearance({
+      translucent: true,
+      renderState: { depthMask: true, depthTest: { enabled: true } },
+    }),
+    asynchronous: false,
+  });
+  // The core needs an outline, which PolylineColorAppearance has no equivalent
+  // of, so it stays an entity polyline — two of them split at the same boundary
+  // rather than 160 chunks with seams of their own.
+  const coreMat = (a, oa) => new Cesium.PolylineOutlineMaterialProperty({
+    color: Cesium.Color.fromCssColorString('#0a0d14').withAlpha(a),
+    outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,' + oa + ')'), outlineWidth: 1.5
+  });
+  const coreDone = viewer.entities.add({ polyline: { positions: corePts.slice(0, 2), width: 5,
+    arcType: Cesium.ArcType.NONE, material: coreMat(A_CORE_DIM / 255, A_OUT_DIM) } });
+  const coreAhead = viewer.entities.add({ polyline: { positions: corePts, width: 5,
+    arcType: Cesium.ArcType.NONE, material: coreMat(1, 0.55) } });
+  // Rebuilding a 6,775-point ribbon every frame would be silly, so the boundary
+  // is quantised: 1/240 of the route is still finer than the old 160-chunk
+  // grid, and a polyline always needs two points, so both halves are guarded.
+  const RIBBON_STEP = Math.max(2, Math.floor((N - 1) / 240));
+  let ribbons = [], ribbonCut = -1;
   const setTraveled = (i) => {
-    let c = -1;
-    while (c + 1 < routeChunks.length && i >= routeChunks[c + 1].i1) c++;
-    if (c === dimmedThrough) return;
-    const lo = Math.max(0, Math.min(c, dimmedThrough) + (dimmedThrough < c ? 1 : 0));
-    const hi = Math.max(c, dimmedThrough);
-    for (let j = lo; j <= hi; j++) {
-      const ch = routeChunks[j], done = j <= c;
-      ch.halo.polyline.material = done ? ch.haloDim : ch.haloBright;
-      ch.core.polyline.material = done ? ch.coreDim : ch.coreBright;
-    }
-    dimmedThrough = c;
+    const cut = i >= N - 2 ? N - 1 : Math.round(i / RIBBON_STEP) * RIBBON_STEP;
+    if (cut === ribbonCut) return;
+    ribbonCut = cut;
+    for (const r of ribbons) scene.primitives.remove(r);
+    ribbons = [];
+    if (N - cut >= 2) ribbons.push(scene.primitives.add(ribbon(cut, N, haloAheadCols)));
+    coreDone.polyline.positions = corePts.slice(0, Math.max(2, cut + 1));
+    coreAhead.polyline.positions = N - cut >= 2 ? corePts.slice(cut, N) : corePts.slice(N - 2, N);
   };
+  setTraveled(0);
   // ---- The convoy: 3D vehicles that drive the trail -----------------------
   // Selected by TRAILPILOT_VEHICLE (via window.TP_CONFIG.vehicle):
   //   subaru = teal 2001 Forester tows the JKU, which tows the blue Tacoma
