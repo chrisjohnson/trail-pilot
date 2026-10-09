@@ -302,6 +302,32 @@ async function init() {
     for (let j = Math.max(0, i - SMOOTH); j <= Math.min(N - 2, i + SMOOTH); j++) { s += rawSpd[j]; c++; }
     spd[i] = s / c;
   }
+  // Where the run actually stopped, in run-clock seconds, taken from the
+  // pipeline's break detection. The viewer used to re-derive "stopped" from
+  // speed plus a >600 s gap between points, and the two definitions disagreed.
+  // The first break on the reference run parks for 10 minutes, but its last
+  // logged point is only 568 s before the next one — under the threshold — so
+  // the whole break rendered orange, at the speed the vehicle arrived at,
+  // directly under a waypoint reading "10m break".
+  //
+  // One source of truth: if the pipeline called it a break, speed is zero
+  // there. The strip, the map halo and the hover readout then all agree with
+  // the marker on the map, because they are all reading the same fact instead
+  // of three guesses about it.
+  const t0run = new Date(D.startUTC.replace(' ', 'T').replace(' UTC', 'Z')).getTime() / 1000;
+  const breakSpans = D.breaks.map((b) => {
+    const st = new Date(b.startUTC.replace(' ', 'T').replace(' UTC', 'Z')).getTime() / 1000 - t0run;
+    return { start: st, end: st + b.durSec };
+  });
+  const inBreak = (t) => {
+    for (let i = 0; i < breakSpans.length; i++) {
+      const b = breakSpans[i];
+      if (t >= b.start && t <= b.end) return true;
+    }
+    return false;
+  };
+  for (let i = 0; i < N - 1; i++) if (inBreak(timeArr[i])) spd[i] = 0;
+
   const speedAt = (t) => {
     let i = timeToIndex(t); if (i < 0) i = 0; if (i > N - 2) i = N - 2;
     if (N > 1 && timeArr[i+1] - timeArr[i] > 600) return 0; // break gap = stopped
@@ -412,38 +438,69 @@ async function init() {
   // PolylineColorAppearance — the documented way — drew nothing at all in
   // 1.125 across translucent/opaque, released/unreleased and both arc types.
   // 32 chunks at 26 px wide reads as a gradient and is provably drawn.
+  // The traveled part of the route is quieter now rather than a different
+  // colour. It used to be a purple overlay laid on top of the speed halo, so a
+  // stretch you had already driven turned violet — two colours for the same
+  // road, and neither of them the speed the halo exists to show. Dimming the
+  // same colours instead keeps the speed readable and lets the eye fall to the
+  // part of the trail that is still ahead.
+  //
+  // The core is chunked on the same index ranges as the halo so both dim on the
+  // same boundary; one unbroken core polyline could not be dimmed along a
+  // prefix without rebuilding its geometry every time the playhead moved.
   const HALO_CHUNKS = 160;
+  const corePts = ptsAt(0.44);
+  // Darkening matters as much as the alpha here. OpenTopoMap is pale, so a
+  // saturated speed colour at low alpha still reads as a coloured smear — it
+  // just becomes a paler version of the same shout. Pulling the hue most of the
+  // way down toward the map's own ink makes the traveled trail look like a
+  // shadow of itself: the speed is still legible if you look for it, but it
+  // stops competing with the part of the route that is still ahead.
+  const A_HALO = 128, A_HALO_DIM = 96, A_CORE_DIM = 118, A_OUT_DIM = 0.10, DIM_MIX = 0.74;
+  const DIM_INK = [13, 17, 25];
+  const dimRGB = (c) => [c[0] + (DIM_INK[0] - c[0]) * DIM_MIX,
+                         c[1] + (DIM_INK[1] - c[1]) * DIM_MIX,
+                         c[2] + (DIM_INK[2] - c[2]) * DIM_MIX];
+  const routeChunks = [];
   {
     const step = (N - 1) / HALO_CHUNKS;
     for (let j = 0; j < HALO_CHUNKS; j++) {
       const i0 = Math.floor(j * step), i1 = Math.min(N - 1, Math.floor((j + 1) * step) + 1);
       const [r, g, bl] = speedRGB(speedAt((timeArr[i0] + timeArr[Math.max(i0, i1 - 1)]) / 2));
-      viewer.entities.add({
-        polyline: {
-          positions: haloPts.slice(i0, i1 + 1), width: 26, arcType: Cesium.ArcType.NONE,
-          material: Cesium.Color.fromBytes(r, g, bl, 128)
-        }
+      const coreMat = (a, oa) => new Cesium.PolylineOutlineMaterialProperty({
+        color: Cesium.Color.fromCssColorString('#0a0d14').withAlpha(a),
+        outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,' + oa + ')'), outlineWidth: 1.5
       });
+      const haloBright = Cesium.Color.fromBytes(r, g, bl, A_HALO);
+      const halo = viewer.entities.add({
+        polyline: { positions: haloPts.slice(i0, i1 + 1), width: 26, arcType: Cesium.ArcType.NONE, material: haloBright }
+      });
+      const core = viewer.entities.add({
+        polyline: { positions: corePts.slice(i0, i1 + 1), width: 5, arcType: Cesium.ArcType.NONE, material: coreMat(1, 0.55) }
+      });
+      const d = dimRGB([r, g, bl]);
+      routeChunks.push({ i1, halo, core, haloBright, haloDim: Cesium.Color.fromBytes(d[0], d[1], d[2], A_HALO_DIM),
+        coreBright: core.polyline.material, coreDim: coreMat(A_CORE_DIM / 255, A_OUT_DIM) });
     }
   }
-  const glowPts = ptsAt(0.42);
-  const glowTraveled = viewer.entities.add({
-    polyline: {
-      // Two points, never one: a single-vertex polyline gives PolylineGeometry a
-      // degenerate plane to fit, and the NaN normal takes the render loop down.
-      positions: glowPts.slice(0, 2), width: 26, arcType: Cesium.ArcType.NONE,
-      material: Cesium.Color.fromCssColorString('rgba(186,140,255,0.55)')
+  // Dim the chunks the playhead has finished, undim anything it has come back
+  // under. Only the chunks between the old boundary and the new one are
+  // touched, so this is O(chunks crossed) rather than O(160) per frame, and
+  // scrubbing backwards is the same loop in the other direction.
+  let dimmedThrough = -1;
+  const setTraveled = (i) => {
+    let c = -1;
+    while (c + 1 < routeChunks.length && i >= routeChunks[c + 1].i1) c++;
+    if (c === dimmedThrough) return;
+    const lo = Math.max(0, Math.min(c, dimmedThrough) + (dimmedThrough < c ? 1 : 0));
+    const hi = Math.max(c, dimmedThrough);
+    for (let j = lo; j <= hi; j++) {
+      const ch = routeChunks[j], done = j <= c;
+      ch.halo.polyline.material = done ? ch.haloDim : ch.haloBright;
+      ch.core.polyline.material = done ? ch.coreDim : ch.coreBright;
     }
-  });
-  const routeCore = viewer.entities.add({
-    polyline: {
-      positions: ptsAt(0.44), width: 5, arcType: Cesium.ArcType.NONE,
-      material: new Cesium.PolylineOutlineMaterialProperty({
-        color: Cesium.Color.fromCssColorString('#0a0d14'),
-        outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,0.55)'), outlineWidth: 1.5
-      })
-    }
-  });
+    dimmedThrough = c;
+  };
   // ---- The convoy: 3D vehicles that drive the trail -----------------------
   // Selected by TRAILPILOT_VEHICLE (via window.TP_CONFIG.vehicle):
   //   subaru = teal 2001 Forester tows the JKU, which tows the blue Tacoma
@@ -791,12 +848,11 @@ async function init() {
   const elevCanvas = document.getElementById('elev');
   const ectx = elevCanvas.getContext('2d');
   let eH = 88, M_TO_FT = 3.28084, padL = 44, padR = 10, padT = 12, padB = 18;
-  const t0run = new Date(D.startUTC.replace(' ','T').replace(' UTC','Z')).getTime()/1000;
-  // breaks in the run clock: start/end (sec), flat elevation at the pre-break point
-  const breakInfo = D.breaks.map(b => {
-    const s = new Date(b.startUTC.replace(' ','T').replace(' UTC','Z')).getTime()/1000 - t0run;
-    let pre = 0; for (let i=0;i<N;i++){ if (timeArr[i] < s) pre=i; else break; }
-    return { start: s, end: s + b.durSec, ele: flat[pre*4+2]*M_TO_FT, preIdx: pre };
+  // breaks in the run clock: flat elevation at the pre-break point, so the
+  // profile line goes level across a stop instead of drifting with GPS jitter
+  const breakInfo = breakSpans.map(b => {
+    let pre = 0; for (let i=0;i<N;i++){ if (timeArr[i] < b.start) pre=i; else break; }
+    return { start: b.start, end: b.end, ele: flat[pre*4+2]*M_TO_FT, preIdx: pre };
   });
   const elevAtTime = (t) => {
     for (const b of breakInfo) if (t >= b.start && t <= b.end) return b.ele;
@@ -821,28 +877,39 @@ async function init() {
   // clearly. A median keeps a mostly-parked window parked and a mostly-moving
   // window moving, and only flips at the boundary. The on-map halo is left on
   // raw speedAt — that is where the fine-grained detail belongs.
-  const effSpd = new Float64Array(N);
-  for (let i = 0; i < N; i++) effSpd[i] = (i < N - 1 && timeArr[i + 1] - timeArr[i] > 600) ? 0 : spd[i];
-  const firstAtOrAfter = (t) => {
-    let lo = 0, hi = N;
-    while (lo < hi) { const m = (lo + hi) >> 1; if (timeArr[m] < t) lo = m + 1; else hi = m; }
-    return lo;
-  };
+  // Sample speed on a fixed TIME grid, not over the route points that happen to
+  // fall in the window. A break where the logger went quiet contains no points
+  // at all, so a median over the points in a window centred there finds nothing
+  // and falls back to the first point after the break — reporting the speed you
+  // resumed at, i.e. green for a 40-minute stop. (This is exactly what broke
+  // the first version of this: the reference fixture keeps logging stationary
+  // points through its breaks, so it looked right on the fixture and wrong on
+  // any route recorded by something that stops writing when it stops moving.)
+  //
+  // Walking time forward and calling a >600 s gap parked is what speedAt
+  // already does for the hover readout, so the strip now agrees with the
+  // readout instead of contradicting it.
+  const BAND_SMOOTH_S = 240, BAND_STEP_S = 30;
+  const nSamp = Math.max(2, Math.ceil(total / BAND_STEP_S) + 1);
+  const sampSpd = new Float64Array(nSamp);
+  {
+    let i = 0;
+    for (let j = 0; j < nSamp; j++) {
+      const t = j * BAND_STEP_S;
+      while (i < N - 1 && timeArr[i + 1] <= t) i++;
+      sampSpd[j] = (i < N - 1 && timeArr[i + 1] - timeArr[i] > 600) ? 0 : spd[i];
+    }
+  }
   const medBuf = [];
   const medianSpd = (t0, t1) => {
-    const a = firstAtOrAfter(t0), b = Math.max(a + 1, firstAtOrAfter(t1));
+    const a = Math.max(0, Math.floor(t0 / BAND_STEP_S));
+    const b = Math.min(nSamp - 1, Math.ceil(t1 / BAND_STEP_S));
     medBuf.length = 0;
-    for (let i = a; i < b; i++) medBuf.push(effSpd[i]);
+    for (let j = a; j <= b; j++) medBuf.push(sampSpd[j]);
     medBuf.sort((x, y) => x - y);
     const m = medBuf.length >> 1;
     return medBuf.length % 2 ? medBuf[m] : (medBuf[m - 1] + medBuf[m]) / 2;
   };
-  // Window is deliberately wider than the band it colours. A band is ~108 s
-  // and ~3.5 px, so a one-band median still left visible band-to-band chatter;
-  // +-4 min is ~4 bands and reads as stretches of road instead of samples.
-  // Shortest break in the reference run is 10 min, so its middle stays fully
-  // inside the window and it still comes out solid grey.
-  const BAND_SMOOTH_S = 240;
   const bandRGB = new Array(PLOT_N);
   for (let k = 0; k < PLOT_N; k++) bandRGB[k] = speedRGB(medianSpd(ptx[k] - BAND_SMOOTH_S, ptx[k] + BAND_SMOOTH_S));
   document.getElementById('tl-legend').innerHTML =
@@ -886,7 +953,7 @@ async function init() {
   sizeElev();
   window.addEventListener('resize', () => { sizeElev(); drawElev(elapsed); });
 
-  let elapsed = 0, playing = false, lastT = 0, speed = 120, lastGlow = -1;
+  let elapsed = 0, playing = false, lastT = 0, speed = 120;
   let previewActive = false, previewAt = null;
   const showAt = (at, now) => {
     let i = Math.min(timeToIndex(at), N-2);
@@ -899,7 +966,7 @@ async function init() {
     // Regrow the purple halo. No throttle any more: it is a view over an array
     // that already exists, and the polyline is no longer draped, so there is no
     // worker round-trip to lose a frame behind.
-    if (i !== lastGlow) { lastGlow = i; glowTraveled.polyline.positions = glowPts.slice(0, Math.max(2, i + 1)); }
+    setTraveled(i);
     drawElev(at);
     viewer.scene.requestRender(); // demand mode: scrub/click/touch/play must ask for a frame
   };
@@ -911,11 +978,11 @@ async function init() {
   });
   elevCanvas.addEventListener('mouseleave', () => {
     if (!previewActive) return;
-    previewActive = false; previewAt = null; lastT = performance.now(); lastGlow = 0;
+    previewActive = false; previewAt = null; lastT = performance.now();
     showAt(elapsed, performance.now());
   });
   elevCanvas.addEventListener('click', (e) => {
-    elapsed = elevFrac(e)*total; previewActive = false; previewAt = null; lastT = performance.now(); lastGlow = 0;
+    elapsed = elevFrac(e)*total; previewActive = false; previewAt = null; lastT = performance.now();
     showAt(elapsed, performance.now());
     if (elapsed>=total && playing){ playing=false; playBtn.textContent='▶ Play'; }
   });
@@ -931,7 +998,7 @@ async function init() {
   };
   elevCanvas.addEventListener('touchstart', (e) => { e.preventDefault(); scrubTo(e); }, { passive:false });
   elevCanvas.addEventListener('touchmove',  (e) => { e.preventDefault(); scrubTo(e); }, { passive:false });
-  elevCanvas.addEventListener('touchend',   (e) => { lastT = performance.now(); lastGlow = 0; showAt(elapsed, performance.now()); if (elapsed>=total && playing){ playing=false; playBtn.textContent='▶ Play'; } });
+  elevCanvas.addEventListener('touchend',   (e) => { lastT = performance.now(); showAt(elapsed, performance.now()); if (elapsed>=total && playing){ playing=false; playBtn.textContent='▶ Play'; } });
   const loop = () => {
     if (!playing) return;
     const now = performance.now();
