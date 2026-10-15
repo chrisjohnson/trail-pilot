@@ -504,10 +504,11 @@ async function init() {
   // the position across the width, so a 1 px ramp carries the speed gradient
   // lengthwise while the shader puts a Gaussian on the alpha sideways: the band
   // fades to 0% at both edges and there is no hard border at width/2 to see.
-  // s0/s1 are the slice of the route a ribbon covers, which keeps the gradient
-  // aligned when the halo is split at the traveled boundary — st.s restarts at 0
-  // for every polyline, so without them the gradient would restart too.
+  // The traveled boundary is a uniform, not a geometry change: the ribbon is
+  // built once over the whole route and the cut slides along it, so the gradient
+  // stays put and nothing asynchronous can fall behind the playhead.
   const GLOW_W = 15, GLOW_K = 8, GLOW_PEAK = 0.85, RAMP_W = 1024;
+  const GLOW_FEATHER = 0.004;   // how far ahead of the playhead the glow fades in, as a route fraction
   const glowRamp = document.createElement('canvas');
   glowRamp.width = RAMP_W; glowRamp.height = 1;
   {
@@ -522,28 +523,37 @@ async function init() {
   }
   const glowMaterial = new Cesium.Material({
     fabric: {
-      uniforms: { glowRamp: glowRamp, s0: 0, s1: 1 },
-      source: 'uniform sampler2D glowRamp;\nuniform float s0;\nuniform float s1;\n' +
+      uniforms: { glowRamp: glowRamp, uCut: 0 },
+      // The traveled boundary lives here rather than in the geometry: the ribbon
+      // is built once for the whole route and this cut slides along it, so
+      // playback updates one float instead of rebuilding a 6,775-point primitive
+      // every step. Rebuilding is what made the glow lag the playhead by a few
+      // frames, and those frames read as the route flickering back to its
+      // untraveled look. uCut is a fraction of the vertex index, matching st.s.
+      source: 'uniform sampler2D glowRamp;\nuniform float uCut;\n' +
         'czm_material czm_getMaterial(czm_materialInput materialInput)\n{\n' +
-        '    czm_material material = czm_getDefaultMaterial(materialInput);\n' +
         '    vec2 st = materialInput.st;\n' +
+        '    if (st.s < uCut) discard;\n' +
+        '    czm_material material = czm_getDefaultMaterial(materialInput);\n' +
         '    float u = abs(st.t * 2.0 - 1.0);\n' +
         '    float k = ' + GLOW_K.toFixed(1) + ';\n' +
         '    float tail = exp(-k);\n' +
-        '    material.diffuse = texture(glowRamp, vec2(mix(s0, s1, st.s), 0.5)).rgb;\n' +
+        '    material.diffuse = texture(glowRamp, vec2(st.s, 0.5)).rgb;\n' +
         '    material.alpha = ' + GLOW_PEAK.toFixed(2) + ' * (exp(-k * u * u) - tail) / (1.0 - tail);\n' +
+        '    material.alpha *= smoothstep(uCut, uCut + ' + GLOW_FEATHER.toFixed(4) + ', st.s);\n' +
         '    return material;\n}'
     }
   });
-  const ribbon = (a, b) => new Cesium.Primitive({
+  // One primitive for the whole route, built once and never touched again.
+  const haloRibbon = scene.primitives.add(new Cesium.Primitive({
     geometryInstances: new Cesium.GeometryInstance({
       geometry: new Cesium.PolylineGeometry({
-        positions: haloPts.slice(a, b),
+        positions: haloPts,
         width: GLOW_W, arcType: Cesium.ArcType.NONE,
         vertexFormat: Cesium.VertexFormat.POSITION_AND_ST,
       }),
     }),
-    // depthMask is the part that matters for how this looks. A 44 px ribbon
+    // depthMask is the part that matters for how this looks. A ribbon this wide
     // along a trail that turns back on itself overlaps its own earlier
     // fragments constantly, and a translucent draw without a depth write adds
     // up: every overlap becomes a darker patch, which is what read as
@@ -555,38 +565,61 @@ async function init() {
       renderState: { depthMask: true, depthTest: { enabled: true } },
     }),
     asynchronous: false,
+  }));
+  // The core keeps its outline, but as one static primitive rather than two
+  // entity polylines whose positions get rewritten on every step. Rewriting them
+  // rebuilds a 6,775-point geometry asynchronously, and while that was in flight
+  // the bright line simply was not drawn: the whole route flickered back to its
+  // traveled look for a few frames, in step with the playhead. Same cure as the
+  // halo — build it once and slide a uniform along it.
+  const CORE_W = 5, CORE_OUT_W = 1.5;
+  const coreMaterial = new Cesium.Material({
+    fabric: {
+      uniforms: { uCut: 0 },
+      source: 'uniform float uCut;\n' +
+        'czm_material czm_getMaterial(czm_materialInput materialInput)\n{\n' +
+        '    czm_material material = czm_getDefaultMaterial(materialInput);\n' +
+        '    vec2 st = materialInput.st;\n' +
+        '    float halfInterior = 0.5 * (' + CORE_W.toFixed(1) + ' - ' + CORE_OUT_W.toFixed(1) + ') / ' + CORE_W.toFixed(1) + ';\n' +
+        '    float lo = 0.5 - halfInterior, hi = 0.5 + halfInterior, e = 0.05;\n' +
+        '    float inside = smoothstep(lo - e, lo + e, st.t) * (1.0 - smoothstep(hi - e, hi + e, st.t));\n' +
+        '    float ahead = step(uCut, st.s);\n' +
+        '    vec3 ink = vec3(' + (10 / 255).toFixed(4) + ', ' + (13 / 255).toFixed(4) + ', ' + (20 / 255).toFixed(4) + ');\n' +
+        '    material.diffuse = mix(vec3(1.0), ink, inside);\n' +
+        '    material.alpha = mix(mix(' + A_OUT_DIM.toFixed(3) + ', 0.55, ahead), ' +
+          'mix(' + (A_CORE_DIM / 255).toFixed(3) + ', 1.0, ahead), inside);\n' +
+        '    return material;\n}'
+    }
   });
-  // The core needs an outline, which PolylineColorAppearance has no equivalent
-  // of, so it stays an entity polyline — two of them split at the same boundary
-  // rather than 160 chunks with seams of their own.
-  const coreMat = (a, oa) => new Cesium.PolylineOutlineMaterialProperty({
-    color: Cesium.Color.fromCssColorString('#0a0d14').withAlpha(a),
-    outlineColor: Cesium.Color.fromCssColorString('rgba(255,255,255,' + oa + ')'), outlineWidth: 1.5
-  });
-  const coreDone = viewer.entities.add({ polyline: { positions: corePts.slice(0, 2), width: 5,
-    arcType: Cesium.ArcType.NONE, material: coreMat(A_CORE_DIM / 255, A_OUT_DIM) } });
-  const coreAhead = viewer.entities.add({ polyline: { positions: corePts, width: 5,
-    arcType: Cesium.ArcType.NONE, material: coreMat(1, 0.55) } });
-  // Rebuilding a 6,775-point ribbon every frame would be silly, so the boundary
-  // is quantised: 1/240 of the route is still finer than the old 160-chunk
-  // grid, and a polyline always needs two points, so both halves are guarded.
+  const coreRibbon = scene.primitives.add(new Cesium.Primitive({
+    geometryInstances: new Cesium.GeometryInstance({
+      geometry: new Cesium.PolylineGeometry({
+        positions: corePts, width: CORE_W, arcType: Cesium.ArcType.NONE,
+        vertexFormat: Cesium.VertexFormat.POSITION_AND_ST,
+      }),
+    }),
+    appearance: new Cesium.PolylineMaterialAppearance({
+      material: coreMaterial, translucent: true,
+      renderState: { depthMask: true, depthTest: { enabled: true } },
+    }),
+    asynchronous: false,
+  }));
+  // Nothing about the route is rebuilt during playback now, so the boundary does
+  // not need quantising for cost reasons — it is kept only because the two halves
+  // of a split used to need it, and a finer cut would change the look mid-tune.
   const RIBBON_STEP = Math.max(2, Math.floor((N - 1) / 240));
-  let ribbons = [], ribbonCut = -1;
+  let ribbonCut = -1;
   const setTraveled = (i) => {
     const cut = i >= N - 2 ? N - 1 : Math.round(i / RIBBON_STEP) * RIBBON_STEP;
     if (cut === ribbonCut) return;
     ribbonCut = cut;
-    for (const r of ribbons) scene.primitives.remove(r);
-    ribbons = [];
-    // The ribbon starts at `cut`, so its st.s of 0 is the route's cut/(N-1) and
-    // its st.s of 1 is the route's end.
-    glowMaterial.uniforms.s0 = N > 1 ? cut / (N - 1) : 0;
-    glowMaterial.uniforms.s1 = 1;
-    if (N - cut >= 2) ribbons.push(scene.primitives.add(ribbon(cut, N)));
-    coreDone.polyline.positions = corePts.slice(0, Math.max(2, cut + 1));
-    coreAhead.polyline.positions = N - cut >= 2 ? corePts.slice(cut, N) : corePts.slice(N - 2, N);
+    // Two floats, and nothing asynchronous that can fall behind the playhead.
+    const frac = N > 1 ? cut / (N - 1) : 0;
+    glowMaterial.uniforms.uCut = frac;
+    coreMaterial.uniforms.uCut = frac;
   };
   setTraveled(0);
+
   // ---- The convoy: 3D vehicles that drive the trail -----------------------
   // Selected by TRAILPILOT_VEHICLE (via window.TP_CONFIG.vehicle):
   //   subaru = teal 2001 Forester tows the JKU, which tows the blue Tacoma
