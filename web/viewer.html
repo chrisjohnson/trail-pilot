@@ -623,9 +623,8 @@ async function init() {
   // ---- The convoy: 3D vehicles that drive the trail -----------------------
   // Selected by TRAILPILOT_VEHICLE (via window.TP_CONFIG.vehicle):
   //   subaru = teal 2001 Forester tows the JKU, which tows the blue Tacoma
-  //   jeep   = red JKU (37" mud tyres, tube flares, roof rack, snorkel) tows
-  //            the Tacoma
-  //   toyota = the blue Tacoma on its own
+  //   jeep   = red JKU (37" mud tyres, tube flares, roof rack, snorkel) on its own
+  //   toyota = the red JKU tows the blue Tacoma
   // The models are generated as glTF by vehicles.js, which authors them in
   // glTF's frame: +Y up, nose at -Z, wheels resting on y=0 — the flat
   // ellipsoid this viewer draws. So heading is the only rotation needed, and
@@ -634,7 +633,7 @@ async function init() {
   // The lead vehicle sits at the scrub position; every towed vehicle walks
   // back along the RECORDED path, so the string bends into corners instead of
   // trailing the leader in a rigid line.
-  const CONVOYS = { subaru: ['forester', 'jeep', 'taco'], jeep: ['jeep', 'taco'], toyota: ['taco'] };
+  const CONVOYS = { subaru: ['forester', 'jeep', 'taco'], jeep: ['jeep'], toyota: ['jeep', 'taco'] };
   const runKind = CONVOYS[String(TP.vehicle)] ? String(TP.vehicle) : 'jeep';
   const TOW_M = 3.4;        // bumper-to-bumper gap
   const VEHICLE_SCALE = 1.1; // slightly heroic, as the flat icon used to be

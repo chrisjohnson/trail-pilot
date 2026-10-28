@@ -43,7 +43,7 @@ pub struct Cfg {
     /// phone still reads 1-2 mph, so 0 would never render as "stopped".
     pub stop_mph: f64,
     /// Runner icon convoy: "subaru" (Forester -> JKU -> Tacoma), "jeep"
-    /// (JKU -> Tacoma), or "toyota" (Tacoma). TRAILPILOT_VEHICLE, default jeep.
+    /// (JKU alone), or "toyota" (JKU -> Tacoma). TRAILPILOT_VEHICLE, default jeep.
     pub vehicle: String,
     pub tz_grid: PathBuf,
 }

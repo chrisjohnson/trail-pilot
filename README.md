@@ -113,7 +113,7 @@ so changing them needs no re-ingest.
 `TRAILPILOT_VEHICLE` (default `jeep`) picks the runner marker — a top-down
 convoy: **subaru** = teal ~2001 Forester towing the JKU, which tows a blue
 Tacoma; **jeep** = red JKU (37" mud tires, roof rack, metal tube fenders)
-towing the Tacoma; **toyota** = the blue Tacoma, being towed. Injected via
+on its own; **toyota** = the red JKU towing the blue Tacoma. Injected via
 `window.TP_CONFIG` at serve time, so switching is also a restart-only change.
            [--cdn-allow unpkg.com] [--tz-grid build/tz-grid.json]
 ```
